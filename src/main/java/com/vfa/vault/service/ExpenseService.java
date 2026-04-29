@@ -6,6 +6,7 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -51,7 +52,7 @@ public class ExpenseService {
     @Transactional
     public ExpenseDTO.Response create(ExpenseDTO.Request request) {
         var category = categoryRepository.findById(request.categoryId())
-                .orElseThrow(() -> new ResourceNotFoundException("Category", request.categoryId()));
+            .orElseThrow(() -> new ResourceNotFoundException("Category", request.categoryId()));
 
         var expense = new Expense();
         expense.setAmount(request.amount());
@@ -64,19 +65,16 @@ public class ExpenseService {
     }
 
     @Transactional
-    public ExpenseDTO.Response update(UUID id, ExpenseDTO.Request request) {
-        var expense = expenseRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Expense", id));
-
-        var category = categoryRepository.findById(request.categoryId())
-                .orElseThrow(() -> new ResourceNotFoundException("Category", request.categoryId()));
-
-        expense.setAmount(request.amount());
-        expense.setNote(request.note());
-        expense.setCategory(category);
-        if (request.expenseDate() != null) expense.setExpenseDate(request.expenseDate());
-
-        return toResponse(expenseRepository.save(expense));
+    public Optional<ExpenseDTO.Response> update(UUID id, ExpenseDTO.Request request) {
+        return expenseRepository.findById(id).map(expense -> {
+            var category = categoryRepository.findById(request.categoryId())
+                    .orElseThrow(() -> new RuntimeException("Category not found: " + request.categoryId()));
+            expense.setAmount(request.amount());
+            expense.setNote(request.note());
+            expense.setCategory(category);
+            if (request.expenseDate() != null) expense.setExpenseDate(request.expenseDate());
+            return toResponse(expenseRepository.save(expense));
+        });
     }
 
     @Transactional
