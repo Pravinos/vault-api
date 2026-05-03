@@ -28,6 +28,24 @@ spring:
     baseline-on-migrate: true
     baseline-version: 0
 
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:lm-studio}
+      lmstudio:
+        base-url: http://localhost:1234/v1
+        api-key: lm-studio
+        chat:
+          model: mistral-7b-instruct
+          options:
+            temperature: 0.3
+      groq:
+        base-url: https://api.groq.com/openai/v1
+        api-key: ${GROQ_API_KEY:}
+        chat:
+          model: llama3-70b-8192
+          options:
+            temperature: 0.3
+
 server:
   port: 8080
   address: 0.0.0.0
@@ -53,3 +71,11 @@ springdoc:
     path: /swagger-ui
     try-it-out-enabled: true
     operations-sorter: method
+
+vault:
+  ai:
+    system-prompt: |
+      You are Vault, a personal finance assistant. You have access to the
+      user's real expense, income, account, and goal data through function calls.
+      Always base your answers on the actual data. Be concise, practical, and
+      friendly. When currency amounts are shown, use the € symbol.
