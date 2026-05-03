@@ -12,6 +12,10 @@ Vault is a personal finance API that supports:
 - **Investment Accounts** – optional metadata with checkpoint-based return tracking
 - **Financial Goals** – lifecycle management (create, update, contribute, deactivate)
 - **Summaries & Stats** – monthly and weekly summaries with aggregate analytics
+- **AI Assistant** – chat over real finance data with tool-calling
+- **LLM Routing** – per-task provider/model selection for chat and summaries
+- **Model Discovery** – live LM Studio and Groq model list endpoints
+- **Manual AI Summary Generation** – trigger summary generation from API
 
 ## Tech Stack
 
@@ -20,6 +24,7 @@ Vault is a personal finance API that supports:
   - Spring Web MVC
   - Spring Data JPA
   - Spring Validation
+  - Spring AI (OpenAI-compatible clients)
 - **Database** PostgreSQL
 - **Migrations** Flyway
 - **Build** Maven Wrapper
@@ -37,6 +42,9 @@ Create a `.env` file in the project root with:
 
 ```properties
 DB_PASSWORD=your_postgres_password
+GROQ_API_KEY=your_groq_api_key
+# Optional fallback for OpenAI-compatible auto-config
+OPENAI_API_KEY=lm-studio
 ```
 
 ### Running Locally
@@ -71,8 +79,14 @@ Using Maven Wrapper (PowerShell):
 src/main/java/com/vfa/vault/
 ├── VaultApplication.java          # Spring Boot entry point
 ├── WebConfig.java                 # CORS & web configuration
+├── ai/                            # AI integration layer
+│   ├── AiConfig.java
+│   ├── FinanceTools.java
+│   ├── LlmProviderRouter.java
+│   └── ModelDiscoveryService.java
 ├── controller/                    # REST API endpoints
 │   ├── AccountController.java
+│   ├── AiController.java
 │   ├── CategoryController.java
 │   ├── ExpenseController.java
 │   ├── GoalController.java
@@ -97,6 +111,7 @@ src/main/java/com/vfa/vault/
 │   ├── IncomeRepository.java
 │   ├── InvestmentCheckpointRepository.java
 │   ├── InvestmentDetailRepository.java
+│   ├── LlmProviderConfigRepository.java
 │   └── WeeklySummaryRepository.java
 ├── entity/                        # JPA entity models
 │   ├── Account.java
@@ -108,15 +123,21 @@ src/main/java/com/vfa/vault/
 │   ├── IncomeCategory.java
 │   ├── InvestmentCheckpoint.java
 │   ├── InvestmentDetail.java
+│   ├── LlmProviderConfig.java
 │   └── WeeklySummary.java
 ├── dto/                           # Request/Response contracts
 │   ├── AccountDTO.java
+│   ├── AiConfigResponseDTO.java
+│   ├── AiConfigUpdateDTO.java
 │   ├── CategoryDTO.java
+│   ├── ChatRequestDTO.java
+│   ├── ChatResponseDTO.java
 │   ├── ExpenseDTO.java
 │   ├── GoalDTO.java
 │   ├── IncomeCategoryDTO.java
 │   ├── IncomeDTO.java
-│   └── InvestmentCheckpointDTO.java
+│   ├── InvestmentCheckpointDTO.java
+│   └── WeeklySummaryDTO.java
 └── exception/                     # Error handling
     ├── GlobalExceptionHandler.java
     └── ResourceNotFoundException.java
@@ -134,7 +155,8 @@ src/main/resources/
 │   ├── V8__create_income_categories.sql
 │   ├── V9__create_income.sql
 │   ├── V10__add_default_account.sql
-│   └── V11__add_account_to_expenses.sql
+│   ├── V11__add_account_to_expenses.sql
+│   └── V12__expand_llm_provider_config.sql
 └── templates/                     # Static resources
 ```
 
@@ -195,7 +217,12 @@ src/main/resources/
 | Column | Type | Constraints |
 |--------|------|-------------|
 | `id` | INT | PRIMARY KEY, DEFAULT 1 |
-| `active_provider` | VARCHAR(20) | NOT NULL, DEFAULT `ollama` |
+| `chat_provider` | VARCHAR(20) | NOT NULL, DEFAULT `lmstudio` |
+| `chat_model` | VARCHAR(100) | NOT NULL, DEFAULT `mistral-7b-instruct` |
+| `summary_provider` | VARCHAR(20) | NOT NULL, DEFAULT `groq` |
+| `summary_model` | VARCHAR(100) | NOT NULL, DEFAULT `llama3-70b-8192` |
+| `lmstudio_models` | TEXT | nullable, JSON array cache |
+| `groq_models` | TEXT | nullable, JSON array cache |
 | `updated_at` | TIMESTAMP | NOT NULL, DEFAULT NOW() |
 
 ### Accounts
@@ -265,7 +292,7 @@ src/main/resources/
 
 **Base Path:** `/api/v1`
 
-**CORS:** Allowed origins include `http://localhost:3000`
+**CORS:** Open in local development (`*`)
 
 ### Categories
 
@@ -324,6 +351,33 @@ src/main/resources/
 | PUT | `/income/{id}` | Update income entry |
 | DELETE | `/income/{id}` | Delete income entry |
 | GET | `/income/summary` | Monthly income totals by category (optional param: `month`) |
+
+### Weekly Summaries
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/summaries` | List weekly summaries (newest first) |
+| GET | `/summaries/latest` | Get most recent weekly summary |
+| GET | `/summaries/{id}` | Get weekly summary by id |
+
+### AI
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/ai/chat` | Chat with AI using finance tool-calling |
+| GET | `/ai/config` | Get chat/summary provider + model config |
+| PATCH | `/ai/config` | Update provider/model for `chat` or `summary` task |
+| GET | `/ai/models/lmstudio` | Discover available LM Studio models |
+| GET | `/ai/models/groq` | Discover available Groq models |
+| POST | `/ai/summaries/generate` | Manually generate and save weekly AI summary |
+
+## AI Integration
+
+- `Chat` and `Summary` can each use independent provider/model combinations.
+- Providers currently supported: `lmstudio`, `groq`.
+- Chat requests support optional `conversationId` for memory continuity.
+- Weekly summary generation logs each step and returns readable error payloads on failure.
+- Model discovery responses are cached in `llm_provider_config`.
 
 ## Balance Calculation
 
