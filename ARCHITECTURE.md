@@ -19,7 +19,7 @@
 |---|---|
 | Backend | Spring Boot 4.x |
 | AI Framework | Spring AI |
-| Local LLM | Ollama (Mistral 7B / LLaMA 3) |
+| Local LLM | LM Studio (OpenAI-compatible local server) |
 | Cloud LLM | Groq API (llama3-70b-8192 — free tier) |
 | Database | PostgreSQL 16 |
 | Frontend | Next.js (App Router) |
@@ -46,7 +46,8 @@
 │         │                 │                      │               │
 │  ┌──────▼─────────────────▼──────────────────────▼───────────┐   │
 │  │                  LLM Provider Router                      │   │
-│  │       Ollama (local)  │  Groq API (cloud fallback)        │   │
+│  │  task_type + user preference → model selection strategy   │   │
+│  │  LM Studio (local) │ Groq (cloud) │ per-task defaults     │   │
 │  └───────────────────────────────────────────────────────────┘   │
 └───────────────────────────┬──────────────────────────────────────┘
                             │
@@ -143,17 +144,37 @@ CREATE TABLE weekly_summaries (
     summary_text TEXT          NOT NULL,
     total_spent  NUMERIC(10,2),
     generated_at TIMESTAMP     NOT NULL DEFAULT NOW(),
-    provider     VARCHAR(20)
+    provider     VARCHAR(20),
+    model        VARCHAR(100)   -- records the exact model used
 );
 
 CREATE TABLE llm_provider_config (
-    id              INT PRIMARY KEY DEFAULT 1,
-    active_provider VARCHAR(20) NOT NULL DEFAULT 'ollama',
-    updated_at      TIMESTAMP   NOT NULL DEFAULT NOW()
+    id                    INT PRIMARY KEY DEFAULT 1,
+    -- Per-task provider preferences
+    chat_provider         VARCHAR(20)  NOT NULL DEFAULT 'lmstudio',  -- 'lmstudio' | 'groq'
+    chat_model            VARCHAR(100) NOT NULL DEFAULT 'mistral-7b-instruct',
+    summary_provider      VARCHAR(20)  NOT NULL DEFAULT 'groq',      -- always groq by default
+    summary_model         VARCHAR(100) NOT NULL DEFAULT 'llama3-70b-8192',
+    -- Available model lists (JSON arrays, refreshed from each provider)
+    lmstudio_models       TEXT,        -- JSON: ["mistral-7b-instruct", "llama-3-8b-instruct", ...]
+    groq_models           TEXT,        -- JSON: ["llama3-70b-8192", "mixtral-8x7b-32768", ...]
+    updated_at            TIMESTAMP    NOT NULL DEFAULT NOW()
 );
 
-INSERT INTO llm_provider_config (active_provider) VALUES ('ollama');
+INSERT INTO llm_provider_config (chat_provider, chat_model, summary_provider, summary_model)
+VALUES ('lmstudio', 'mistral-7b-instruct', 'groq', 'llama3-70b-8192');
 ```
+
+**Provider + model config explained:**
+
+| Column | Default | Description |
+|---|---|---|
+| `chat_provider` | `lmstudio` | Provider used for the interactive chat (`/ai/chat`) |
+| `chat_model` | `mistral-7b-instruct` | Model used for chat — must match what is loaded in LM Studio or available on Groq |
+| `summary_provider` | `groq` | Provider used for weekly summary generation — defaults to Groq for quality |
+| `summary_model` | `llama3-70b-8192` | Model used for weekly summaries |
+| `lmstudio_models` | null | JSON array of models currently available in LM Studio, refreshed on demand |
+| `groq_models` | null | JSON array of Groq models available to the user, refreshed on demand |
 
 ---
 
@@ -454,8 +475,10 @@ Base URL: `http://localhost:8080/api/v1`
 | `GET` | `/ai/summaries` | List all weekly summaries |
 | `GET` | `/ai/summaries/latest` | Get the most recent weekly summary |
 | `POST` | `/ai/summaries/generate` | Manually trigger a summary generation |
-| `GET` | `/ai/provider` | Get the active LLM provider |
-| `POST` | `/ai/provider` | Switch between `ollama` and `groq` |
+| `GET` | `/ai/config` | Get full provider config (providers, models, current selections) |
+| `PATCH` | `/ai/config` | Update provider/model selection for chat or summary task |
+| `GET` | `/ai/models/lmstudio` | Fetch available models from the local LM Studio server |
+| `GET` | `/ai/models/groq` | Fetch available models from the Groq API |
 
 **POST /ai/chat — request body:**
 ```json
@@ -469,10 +492,41 @@ Base URL: `http://localhost:8080/api/v1`
 ```json
 {
   "reply": "Based on your current spending, you've used €320 of your estimated €500 budget...",
-  "provider": "ollama",
+  "provider": "lmstudio",
+  "model": "mistral-7b-instruct",
   "functionCallsUsed": ["getMonthlyExpenses", "getBudgetStatus"]
 }
 ```
+
+**GET /ai/config — response:**
+```json
+{
+  "chat": {
+    "provider": "lmstudio",
+    "model": "mistral-7b-instruct"
+  },
+  "summary": {
+    "provider": "groq",
+    "model": "llama3-70b-8192"
+  },
+  "availableModels": {
+    "lmstudio": ["mistral-7b-instruct", "llama-3-8b-instruct"],
+    "groq": ["llama3-70b-8192", "mixtral-8x7b-32768", "llama3-8b-8192"]
+  }
+}
+```
+
+**PATCH /ai/config — request body:**
+```json
+{
+  "task": "chat",
+  "provider": "groq",
+  "model": "mixtral-8x7b-32768"
+}
+```
+
+> `task` is either `"chat"` or `"summary"`. Provider and model are validated
+> against the available model lists before saving.
 
 ---
 
@@ -490,23 +544,37 @@ Base URL: `http://localhost:8080/api/v1`
 
 ### Provider Strategy
 
-Spring AI's abstraction layer makes it easy to swap providers at runtime. Both Ollama and Groq implement the same `ChatClient` interface — the router selects which one to use based on the `llm_provider_config` table.
+Vault uses two providers — **LM Studio** for local inference and **Groq** for cloud inference. Both expose an OpenAI-compatible API, so Spring AI's `OpenAiChatModel` is used for both. The router selects which provider and model to use based on the **task type**, with separate configurations for chat and weekly summaries.
+
+**Default routing:**
+
+| Task | Default Provider | Default Model | Reason |
+|---|---|---|---|
+| Interactive chat (`/ai/chat`) | LM Studio | user's loaded model | Fast, private, free for quick Q&A |
+| Weekly summary generation | Groq | `llama3-70b-8192` | Requires stronger reasoning for analysis |
+
+The user can override both defaults at any time from the AI settings panel in the frontend.
 
 ```
-User message
-     │
-     ▼
- AI Service
-     │
-     ▼
-LLM Provider Router
-  ├── active = 'ollama'  → OllamaChatModel (local, port 11434)
-  └── active = 'groq'   → OpenAiChatModel with Groq base URL
-                           (api.groq.com/openai/v1)
+User action (chat or summary trigger)
+        │
+        ▼
+  LLM Provider Router
+        │
+        ├── task = CHAT
+        │     └── reads chat_provider + chat_model from llm_provider_config
+        │           ├── lmstudio → OpenAiChatModel (http://localhost:1234/v1)
+        │           └── groq    → OpenAiChatModel (https://api.groq.com/openai/v1)
+        │
+        └── task = SUMMARY
+              └── reads summary_provider + summary_model from llm_provider_config
+                    ├── groq    → OpenAiChatModel (default, stronger model)
+                    └── lmstudio → OpenAiChatModel (if user overrides)
 ```
 
-> Groq is OpenAI API-compatible, so Spring AI's `OpenAiChatModel` works with it
-> out of the box — just swap the base URL and API key.
+> Both LM Studio and Groq are OpenAI API-compatible. Spring AI's `OpenAiChatModel`
+> works with both — the only difference is the `base-url` and `api-key`.
+> LM Studio accepts any non-empty string as the API key.
 
 ---
 
@@ -516,29 +584,112 @@ LLM Provider Router
 ```yaml
 spring:
   ai:
-    ollama:
-      base-url: http://localhost:11434
-      chat:
-        model: mistral
-        options:
-          temperature: 0.3
-
     openai:
-      base-url: https://api.groq.com/openai/v1
-      api-key: ${GROQ_API_KEY}
-      chat:
-        model: llama3-70b-8192
-        options:
-          temperature: 0.3
+      # LM Studio (local)
+      lmstudio:
+        base-url: http://localhost:1234/v1
+        api-key: lm-studio          # LM Studio ignores this, but Spring AI requires it
+        chat:
+          model: mistral-7b-instruct  # must match the model loaded in LM Studio
+          options:
+            temperature: 0.3
+
+      # Groq (cloud)
+      groq:
+        base-url: https://api.groq.com/openai/v1
+        api-key: ${GROQ_API_KEY}
+        chat:
+          model: llama3-70b-8192
+          options:
+            temperature: 0.3
 
 vault:
   ai:
-    active-provider: ollama
     system-prompt: |
       You are Vault, a personal finance assistant. You have access to the
       user's real expense, income, account, and goal data through function calls.
       Always base your answers on the actual data. Be concise, practical, and
       friendly. When currency amounts are shown, use the € symbol.
+```
+
+> Define two separate `OpenAiChatModel` beans in a `@Configuration` class,
+> one pointing to LM Studio and one to Groq, qualified with `@Qualifier("lmStudioModel")`
+> and `@Qualifier("groqModel")` respectively. The router injects both and selects
+> at call time.
+
+---
+
+### LLM Provider Router
+
+```java
+@Service
+public class LlmProviderRouter {
+
+    @Qualifier("lmStudioModel")
+    private final OpenAiChatModel lmStudioModel;
+
+    @Qualifier("groqModel")
+    private final OpenAiChatModel groqModel;
+
+    private final LlmProviderConfigRepository configRepo;
+    private final FinanceTools financeTools;
+
+    public enum TaskType { CHAT, SUMMARY }
+
+    public ChatClient getClientForTask(TaskType task) {
+        LlmProviderConfig config = configRepo.findById(1).orElseThrow();
+
+        String provider = task == TaskType.SUMMARY
+            ? config.getSummaryProvider()
+            : config.getChatProvider();
+
+        String model = task == TaskType.SUMMARY
+            ? config.getSummaryModel()
+            : config.getChatModel();
+
+        OpenAiChatModel baseModel = switch (provider) {
+            case "groq"     -> groqModel;
+            default         -> lmStudioModel;   // lmstudio is the local default
+        };
+
+        // Override the model name at call time if it differs from the bean default
+        ChatOptions options = OpenAiChatOptions.builder()
+            .withModel(model)
+            .withTemperature(0.3f)
+            .build();
+
+        return ChatClient.builder(baseModel)
+            .defaultSystem(systemPrompt)
+            .defaultTools(financeTools)
+            .defaultOptions(options)
+            .build();
+    }
+}
+```
+
+---
+
+### Model Discovery
+
+When the user opens the AI settings panel, the frontend calls the model discovery endpoints to populate the model dropdowns with live options rather than hardcoded lists.
+
+**LM Studio** — `GET /ai/models/lmstudio` hits `http://localhost:1234/v1/models` and returns whatever is currently loaded. The response is cached in `lmstudio_models` in `llm_provider_config`.
+
+**Groq** — `GET /ai/models/groq` hits the Groq models endpoint using the configured API key and returns the available model list. Cached in `groq_models`.
+
+```java
+// LM Studio model discovery
+public List<String> getLmStudioModels() {
+    // GET http://localhost:1234/v1/models
+    // Returns whatever models are currently loaded in LM Studio
+    // Falls back to cached list if server is unreachable
+}
+
+// Groq model discovery
+public List<String> getGroqModels() {
+    // GET https://api.groq.com/openai/v1/models
+    // Filtered to chat-capable models only
+}
 ```
 
 ---
@@ -601,44 +752,11 @@ public class FinanceTools {
 }
 ```
 
-> When Phase 3 is implemented, add `getAccountSummaries`, `getIncomeByCategory`,
-> and `getNetCashFlow` to `FinanceTools` so the AI can reason about accounts,
-> income, and investment performance.
-
----
-
-### LLM Provider Router
-
-```java
-@Service
-public class LlmProviderRouter {
-
-    private final OllamaChatModel ollamaModel;
-    private final OpenAiChatModel groqModel;
-    private final LlmProviderConfigRepository configRepo;
-
-    public ChatClient getActiveClient() {
-        String provider = configRepo.getActiveProvider();
-
-        ChatModel model = switch (provider) {
-            case "groq"   -> groqModel;
-            default       -> ollamaModel;
-        };
-
-        return ChatClient.builder(model)
-            .defaultSystem(systemPrompt)
-            .defaultTools(financeTools)
-            .build();
-    }
-}
-```
-
 ---
 
 ### Weekly Summary Generation
 
-The scheduler runs every Monday at 8:00 AM. It builds a data snapshot of
-the past week and passes it to the LLM with a structured prompt.
+The scheduler runs every Monday at 8:00 AM using the **summary provider** (Groq by default). The model used is recorded in the `weekly_summaries` table alongside the generated text.
 
 ```java
 @Scheduled(cron = "0 0 8 * * MON")
@@ -670,12 +788,16 @@ public void generateWeeklySummary() {
             snapshot.accountSummaries()
         );
 
-    String summary = llmProviderRouter.getActiveClient()
-        .prompt(prompt)
-        .call()
-        .content();
+    LlmProviderConfig config = configRepo.findById(1).orElseThrow();
+    ChatClient client = llmProviderRouter.getClientForTask(TaskType.SUMMARY);
 
-    summaryRepository.save(new WeeklySummary(snapshot, summary));
+    String summary = client.prompt(prompt).call().content();
+
+    summaryRepository.save(new WeeklySummary(
+        snapshot, summary,
+        config.getSummaryProvider(),
+        config.getSummaryModel()
+    ));
 }
 ```
 
@@ -753,37 +875,42 @@ public void generateWeeklySummary() {
 
 ### Phase 3 — AI Integration
 
-**Goal:** Connect the app to Ollama locally and Groq as a cloud option,
-with function calling so the LLM can query real data.
+**Goal:** Connect the app to LM Studio locally and Groq as a cloud option, with function calling so the LLM can query real data. The user can choose which provider and model to use per task type from a settings panel.
 
 **Tasks:**
-1. Add Spring AI dependencies: `spring-ai-ollama-spring-boot-starter`, `spring-ai-openai-spring-boot-starter`
-2. Configure both providers in `application.yml`
-3. Implement `FinanceTools` with all `@Tool` methods — including the new account, income, and net cash flow tools added in Phase 2.5
-4. Implement `LlmProviderRouter`
-5. Implement `/ai/chat` with conversation context support
-6. Implement `/ai/provider` (GET + POST) for runtime switching
-7. Build chat UI in Next.js — message thread + input box
-8. Add provider toggle badge (shows "Ollama" or "Groq", clickable to switch)
-9. Test with real questions: "How much did I spend on food?", "What's my net worth?", "How is my Revolut investment performing?"
+1. Add Spring AI dependency: `spring-ai-openai-spring-boot-starter` (used for both LM Studio and Groq)
+2. Define two `OpenAiChatModel` beans in `AiConfig.java` — one for LM Studio (`localhost:1234/v1`), one for Groq
+3. Configure both in `application.yml` with separate base URLs and API keys
+4. Implement `FinanceTools` with all `@Tool` methods including accounts, income, and net cash flow
+5. Implement `LlmProviderRouter` with `TaskType` enum (`CHAT`, `SUMMARY`) and per-task model selection
+6. Implement model discovery endpoints (`GET /ai/models/lmstudio`, `GET /ai/models/groq`)
+7. Implement `GET /ai/config` and `PATCH /ai/config` for reading and updating per-task provider/model
+8. Implement `POST /ai/chat` with conversation context support — uses chat provider/model
+9. Build chat UI in Next.js — message thread + input box
+10. Build AI settings panel in Next.js:
+    - Two sections: "Chat" and "Weekly Summary"
+    - Each shows a provider toggle (LM Studio / Groq) and a model dropdown populated from the discovery endpoints
+    - LM Studio section shows a connectivity status indicator (green/red dot)
+    - Summary section notes that Groq is recommended for best quality
+11. Test with real questions: "How much did I spend on food?", "What's my net worth?", "How is my Revolut investment performing?"
 
-**Deliverable:** A working chat interface that reasons over expenses, income, accounts, and goals.
+**Deliverable:** A working chat interface that reasons over expenses, income, accounts, and goals, with a settings panel to control which model handles each type of task.
 
 ---
 
 ### Phase 4 — Weekly Summary Automation
 
-**Goal:** Automated weekly AI-generated reports that appear on the dashboard.
+**Goal:** Automated weekly AI-generated reports that appear on the dashboard, always using the summary provider (Groq by default) for the best quality output.
 
 **Tasks:**
-1. Implement `WeeklyDataSnapshot` builder — now includes income, net cash flow, and account summaries alongside existing expense and goal data
-2. Implement the `@Scheduled` job with the updated structured prompt
+1. Implement `WeeklyDataSnapshot` builder — includes income, net cash flow, and account summaries alongside existing expense and goal data
+2. Implement the `@Scheduled` job — calls `llmProviderRouter.getClientForTask(TaskType.SUMMARY)`
 3. Implement manual trigger `POST /ai/summaries/generate`
-4. Save summaries to `weekly_summaries` with provider recorded
-5. Build the summary card on the dashboard
+4. Save summaries to `weekly_summaries` with both `provider` and `model` recorded
+5. Build the summary card on the dashboard — shows provider and model used as a small badge
 6. Build the summary history page
 
-**Deliverable:** Every Monday morning a fresh summary covering spending, income, net cash flow, and investment performance is waiting on the dashboard.
+**Deliverable:** Every Monday morning a fresh summary covering spending, income, net cash flow, and investment performance is waiting on the dashboard, generated by the configured summary model.
 
 ---
 
@@ -811,16 +938,20 @@ with function calling so the LLM can query real data.
 
 ## Suggested Models
 
-| Provider | Model | Notes |
-|---|---|---|
-| Ollama | `mistral` | Fast, good for function calling, runs on 8GB VRAM |
-| Ollama | `llama3` | Better reasoning, needs 16GB VRAM |
-| Groq | `llama3-70b-8192` | Free tier, very fast inference, best quality |
-| Groq | `mixtral-8x7b-32768` | Good alternative on Groq free tier |
+| Provider | Model | Best for | Notes |
+|---|---|---|---|
+| LM Studio | `mistral-7b-instruct` | Chat | Fast, good function calling, runs on 8GB VRAM |
+| LM Studio | `llama-3-8b-instruct` | Chat | Slightly better reasoning, still lightweight |
+| LM Studio | `llama-3.2-3b-instruct` | Chat | Very fast on low-end hardware |
+| Groq | `llama3-70b-8192` | Weekly summaries | Free tier, very fast inference, best quality |
+| Groq | `mixtral-8x7b-32768` | Weekly summaries | Good alternative on Groq free tier |
+| Groq | `llama3-8b-8192` | Chat (cloud fallback) | Lightweight Groq option if LM Studio is unavailable |
 
-> **Recommended setup:** Use Ollama locally for daily use (private, free,
-> no latency). Switch to Groq when you want better reasoning quality or
-> if Ollama is slow on your hardware.
+> **Recommended setup:** Use LM Studio with Mistral 7B Instruct for daily chat
+> (private, free, no latency). Keep Groq's `llama3-70b-8192` as the default
+> for weekly summaries — it produces noticeably better financial analysis.
+> If LM Studio is unreachable (e.g. you're on a different machine), switch
+> the chat provider to Groq from the AI settings panel.
 
 ---
 
@@ -884,8 +1015,9 @@ vault/
 │   │   │   ├── GlobalExceptionHandler.java
 │   │   │   └── ResourceNotFoundException.java
 │   │   ├── ai/                           # Phase 3+
+│   │   │   ├── AiConfig.java             # defines lmStudioModel + groqModel beans
 │   │   │   ├── FinanceTools.java
-│   │   │   └── LlmProviderRouter.java
+│   │   │   └── LlmProviderRouter.java    # TaskType-aware routing
 │   │   └── scheduler/                    # Phase 4+
 │   │       └── WeeklySummaryScheduler.java
 │   ├── src/main/resources/
@@ -915,6 +1047,9 @@ vault/
     │   ├── income/
     │   │   └── page.tsx
     │   └── chat/                         # Phase 3+
+│   │   └── page.tsx
+│   └── settings/
+│       └── ai/page.tsx               # Phase 3+ provider/model config panel
     ├── components/
     │   ├── accounts/
     │   │   ├── AccountForm.tsx
