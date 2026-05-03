@@ -5,7 +5,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import com.vfa.vault.dto.WeeklySummaryDTO;
 import com.vfa.vault.entity.WeeklySummary;
 import com.vfa.vault.exception.ResourceNotFoundException;
 import com.vfa.vault.repository.WeeklySummaryRepository;
@@ -18,17 +20,34 @@ public class WeeklySummaryService {
 
     private final WeeklySummaryRepository weeklySummaryRepository;
 
-    public List<WeeklySummary> findAll() {
-        return weeklySummaryRepository.findAllByOrderByGeneratedAtDesc();
+    @Transactional(readOnly = true)
+    public List<WeeklySummaryDTO.Response> findAll() {
+        return weeklySummaryRepository.findAllByOrderByGeneratedAtDesc()
+                .stream().map(this::toResponse).toList();
     }
 
-
-    public Optional<WeeklySummary> findLatest() {
-        return weeklySummaryRepository.findTopByOrderByGeneratedAtDesc();
+    @Transactional(readOnly = true)
+    public Optional<WeeklySummaryDTO.Response> findLatest() {
+        return weeklySummaryRepository.findTopByOrderByGeneratedAtDesc()
+                .map(this::toResponse);
     }
 
-    public WeeklySummary findById(UUID id) {
+    @Transactional(readOnly = true)
+    public WeeklySummaryDTO.Response findById(UUID id) {
         return weeklySummaryRepository.findById(id)
+                .map(this::toResponse)
                 .orElseThrow(() -> new ResourceNotFoundException("WeeklySummary", id));
+    }
+
+    private WeeklySummaryDTO.Response toResponse(WeeklySummary w) {
+        return new WeeklySummaryDTO.Response(
+                w.getId(),
+                w.getWeekStart(),
+                w.getWeekEnd(),
+                w.getSummaryText(),
+                w.getTotalSpent(),
+                w.getGeneratedAt(),
+                w.getProvider()
+        );
     }
 }

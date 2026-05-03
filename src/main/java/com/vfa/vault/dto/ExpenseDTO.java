@@ -19,7 +19,9 @@ public class ExpenseDTO {
             String note,
             @NotNull(message = "Category is required")
             Integer categoryId,
-            LocalDate expenseDate
+            LocalDate expenseDate,
+            @NotNull(message = "Account is required")
+            UUID accountId
             ) {
 
     }
@@ -30,7 +32,9 @@ public class ExpenseDTO {
             String note,
             CategoryDTO.Response category,
             LocalDate expenseDate,
-            LocalDateTime createdAt
+            LocalDateTime createdAt,
+            UUID accountId,
+            String accountName
             ) {
 
     }

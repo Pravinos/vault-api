@@ -23,11 +23,13 @@ public class GoalService {
 
     private final GoalRepository goalRepository;
 
+    @Transactional(readOnly = true)
     public List<GoalDTO.Response> findAllActive() {
         return goalRepository.findByIsActiveTrueOrderByCreatedAtDesc()
                 .stream().map(this::toResponse).toList();
     }
 
+    @Transactional(readOnly = true)
     public GoalDTO.Response findById(UUID id) {
         return goalRepository.findById(id)
                 .map(this::toResponse)
@@ -43,7 +45,6 @@ public class GoalService {
         goal.setGoalType(request.goalType());
         goal.setDeadline(request.deadline());
         goal.setSavedAmount(BigDecimal.ZERO);
-        goal.setIsActive(true);
 
         return toResponse(goalRepository.save(goal));
     }
@@ -75,14 +76,14 @@ public class GoalService {
         var goal = goalRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Goal", id));
 
+        if (!Boolean.TRUE.equals(goal.getIsActive())) {
+            throw new IllegalArgumentException("Cannot contribute to an inactive goal");
+        }
+
         BigDecimal newSaved = goal.getSavedAmount().add(request.amount());
         goal.setSavedAmount(newSaved);
 
         return toResponse(goalRepository.save(goal));
-    }
-
-    public List<GoalDTO.Response> getAllProgress() {
-        return findAllActive();
     }
 
     private GoalDTO.Response toResponse(Goal g) {

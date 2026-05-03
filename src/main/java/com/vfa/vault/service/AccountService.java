@@ -1,0 +1,189 @@
+package com.vfa.vault.service;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.vfa.vault.dto.AccountDTO;
+import com.vfa.vault.entity.Account;
+import com.vfa.vault.entity.AccountType;
+import com.vfa.vault.entity.InvestmentCheckpoint;
+import com.vfa.vault.entity.InvestmentDetail;
+import com.vfa.vault.exception.ResourceNotFoundException;
+import com.vfa.vault.repository.AccountRepository;
+import com.vfa.vault.repository.ExpenseRepository;
+import com.vfa.vault.repository.IncomeRepository;
+import com.vfa.vault.repository.InvestmentCheckpointRepository;
+import com.vfa.vault.repository.InvestmentDetailRepository;
+
+import lombok.RequiredArgsConstructor;
+
+@Service
+@RequiredArgsConstructor
+public class AccountService {
+
+    private final AccountRepository accountRepository;
+    private final InvestmentDetailRepository investmentDetailRepository;
+    private final InvestmentCheckpointRepository investmentCheckpointRepository;
+    private final IncomeRepository incomeRepository;
+    private final ExpenseRepository expenseRepository;
+
+    @Transactional(readOnly = true)
+    public List<AccountDTO.Response> getAllAccounts() {
+        return accountRepository.findByIsActiveTrue().stream()
+                .map(this::buildResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public AccountDTO.Response getAccountById(UUID id) {
+        Account account = accountRepository.findByIdAndIsActiveTrue(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Account", id));
+        return buildResponse(account);
+    }
+
+    @Transactional
+    public AccountDTO.Response createAccount(AccountDTO.Request dto) {
+        var account = new Account();
+        account.setName(dto.name());
+        account.setAccountType(dto.accountType());
+        account.setOpeningBalance(dto.openingBalance());
+        account = accountRepository.save(account);
+
+        if (dto.accountType() == AccountType.INVESTMENT
+                && (dto.platform() != null || dto.instrument() != null || dto.assetType() != null)) {
+            var detail = new InvestmentDetail();
+            detail.setAccount(account);
+            detail.setPlatform(dto.platform());
+            detail.setInstrument(dto.instrument());
+            detail.setAssetType(dto.assetType());
+            investmentDetailRepository.save(detail);
+        }
+
+        return buildResponse(account);
+    }
+
+    @Transactional
+    public AccountDTO.Response updateAccount(UUID id, AccountDTO.Request dto) {
+        Account account = accountRepository.findByIdAndIsActiveTrue(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Account", id));
+
+        account.setName(dto.name());
+        account.setAccountType(dto.accountType());
+        account.setOpeningBalance(dto.openingBalance());
+        account = accountRepository.save(account);
+
+        if (dto.accountType() == AccountType.INVESTMENT) {
+            var detail = investmentDetailRepository.findByAccountId(account.getId())
+                    .orElse(new InvestmentDetail());
+            detail.setAccount(account);
+            detail.setPlatform(dto.platform());
+            detail.setInstrument(dto.instrument());
+            detail.setAssetType(dto.assetType());
+            investmentDetailRepository.save(detail);
+        } else {
+            // Clean up orphaned InvestmentDetail if type changed away from INVESTMENT
+            investmentDetailRepository.findByAccountId(account.getId())
+                    .ifPresent(investmentDetailRepository::delete);
+        }
+
+        return buildResponse(account);
+    }
+
+    @Transactional
+    public void deactivateAccount(UUID id) {
+        Account account = accountRepository.findByIdAndIsActiveTrue(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Account", id));
+        account.setActive(false);
+        accountRepository.save(account);
+    }
+
+    @Transactional
+    public AccountDTO.Response updateManualBalance(UUID id, AccountDTO.ManualBalanceRequest dto) {
+        Account account = accountRepository.findByIdAndIsActiveTrue(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Account", id));
+        account.setManualBalance(dto.manualBalance());
+        account.setManualBalanceUpdatedAt(LocalDateTime.now());
+
+        if (dto.alsoSetAsOpeningBalance()) {
+            BigDecimal totalIncome = incomeRepository.sumByAccountId(id);
+            BigDecimal totalExpenses = expenseRepository.sumByAccountId(id);
+            boolean hasNoTransactions =
+                    (totalIncome == null || totalIncome.compareTo(BigDecimal.ZERO) == 0)
+                    && (totalExpenses == null || totalExpenses.compareTo(BigDecimal.ZERO) == 0);
+            if (hasNoTransactions) {
+                account.setOpeningBalance(dto.manualBalance());
+            }
+            // If transactions exist, silently ignore the flag — don't corrupt history
+        }
+
+        account = accountRepository.save(account);
+        return buildResponse(account);
+    }
+
+    private AccountDTO.Response buildResponse(Account account) {
+        BigDecimal totalIncome = incomeRepository.sumByAccountId(account.getId());
+        if (totalIncome == null) totalIncome = BigDecimal.ZERO;
+
+        BigDecimal totalExpenses = expenseRepository.sumByAccountId(account.getId());
+        if (totalExpenses == null) totalExpenses = BigDecimal.ZERO;
+
+        BigDecimal calculated = account.getOpeningBalance()
+                .add(totalIncome)
+                .subtract(totalExpenses);
+
+        String platform = null;
+        String instrument = null;
+        String assetType = null;
+        BigDecimal contributedAmount = null;
+        BigDecimal currentValue = null;
+        BigDecimal returnAmount = null;
+        BigDecimal returnPercentage = null;
+
+        if (account.getAccountType() == AccountType.INVESTMENT) {
+            var detailOpt = investmentDetailRepository.findByAccountId(account.getId());
+            if (detailOpt.isPresent()) {
+                var detail = detailOpt.get();
+                platform = detail.getPlatform();
+                instrument = detail.getInstrument();
+                assetType = detail.getAssetType();
+            }
+
+            contributedAmount = calculated;
+            currentValue = investmentCheckpointRepository
+                    .findLatestByAccountId(account.getId())
+                    .map(InvestmentCheckpoint::getValue)
+                    .orElse(contributedAmount);
+            returnAmount = currentValue.subtract(contributedAmount);
+            returnPercentage = contributedAmount.compareTo(BigDecimal.ZERO) != 0
+                    ? returnAmount.divide(contributedAmount, 4, RoundingMode.HALF_UP)
+                            .multiply(BigDecimal.valueOf(100))
+                    : BigDecimal.ZERO;
+        }
+
+        return new AccountDTO.Response(
+                account.getId(),
+                account.getName(),
+                account.getAccountType(),
+                account.getOpeningBalance(),
+                account.getManualBalance(),
+                account.getManualBalanceUpdatedAt(),
+                account.getCreatedAt(),
+                calculated,
+                totalIncome,
+                totalExpenses,
+                platform,
+                instrument,
+                assetType,
+                contributedAmount,
+                currentValue,
+                returnAmount,
+                returnPercentage
+        );
+    }
+}

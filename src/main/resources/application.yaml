@@ -33,7 +33,7 @@ server:
 
 logging:
   level:
-    com.vault: DEBUG
+    com.vfa.vault: DEBUG
     org.flywaydb: INFO
 
 springdoc:

@@ -87,4 +87,7 @@ public interface ExpenseRepository extends JpaRepository<Expense, UUID> {
     List<Expense> findByWeek(
             @Param("weekStart") LocalDate weekStart,
             @Param("weekEnd") LocalDate weekEnd);
+
+    @Query("SELECT SUM(e.amount) FROM Expense e WHERE e.account.id = :accountId")
+    BigDecimal sumByAccountId(@Param("accountId") UUID accountId);
 }

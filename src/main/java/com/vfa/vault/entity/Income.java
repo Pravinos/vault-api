@@ -19,8 +19,8 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "expenses")
-public class Expense {
+@Table(name = "income")
+public class Income {
 
     @Id
     @UuidGenerator
@@ -33,22 +33,22 @@ public class Expense {
     private String note;
 
     @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "category_id", nullable = false)
-    private Category category;
+    @JoinColumn(name = "income_category_id", nullable = false)
+    private IncomeCategory incomeCategory;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "account_id", nullable = false)
     private Account account;
 
-    @Column(name = "expense_date", nullable = false)
-    private LocalDate expenseDate;
+    @Column(name = "income_date", nullable = false)
+    private LocalDate incomeDate;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     @PrePersist
     protected void onCreate() {
-        if (expenseDate == null) expenseDate = LocalDate.now();
+        if (incomeDate == null) incomeDate = LocalDate.now();
         createdAt = LocalDateTime.now();
     }
 }

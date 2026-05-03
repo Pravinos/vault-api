@@ -1,7 +1,6 @@
 package com.vfa.vault.entity;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -20,8 +19,8 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "goals")
-public class Goal {
+@Table(name = "accounts")
+public class Account {
 
     @Id
     @UuidGenerator
@@ -30,37 +29,29 @@ public class Goal {
     @Column(nullable = false, length = 100)
     private String name;
 
-    @Column(length = 255)
-    private String description;
-
-    @Column(name = "target_amount", nullable = false, precision = 10, scale = 2)
-    private BigDecimal targetAmount;
-
-    @Column(name = "saved_amount", nullable = false, precision = 10, scale = 2)
-    private BigDecimal savedAmount = BigDecimal.ZERO;
-
     @Enumerated(EnumType.STRING)
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
-    @Column(name = "goal_type", nullable = false, columnDefinition = "goal_type")
-    private GoalType goalType;
+    @Column(name = "account_type", nullable = false, columnDefinition = "account_type")
+    private AccountType accountType;
 
-    @Column(name = "deadline")
-    private LocalDate deadline;
+    @Column(name = "opening_balance", nullable = false, precision = 10, scale = 2)
+    private BigDecimal openingBalance = BigDecimal.ZERO;
+
+    @Column(name = "manual_balance", precision = 10, scale = 2)
+    private BigDecimal manualBalance;
+
+    @Column(name = "manual_balance_updated_at")
+    private LocalDateTime manualBalanceUpdatedAt;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     @Column(name = "is_active", nullable = false)
-    private Boolean isActive = true;
+    private boolean isActive = true;
 
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
-        if (savedAmount == null) savedAmount = BigDecimal.ZERO;
-        if (isActive == null) isActive = true;
-    }
-
-    public enum GoalType {
-        SHORT_TERM, LONG_TERM
+        if (openingBalance == null) openingBalance = BigDecimal.ZERO;
     }
 }

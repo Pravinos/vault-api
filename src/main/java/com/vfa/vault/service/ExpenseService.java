@@ -16,6 +16,7 @@ import com.vfa.vault.dto.CategoryDTO;
 import com.vfa.vault.dto.ExpenseDTO;
 import com.vfa.vault.entity.Expense;
 import com.vfa.vault.exception.ResourceNotFoundException;
+import com.vfa.vault.repository.AccountRepository;
 import com.vfa.vault.repository.CategoryRepository;
 import com.vfa.vault.repository.ExpenseRepository;
 
@@ -27,9 +28,11 @@ public class ExpenseService {
 
     private final ExpenseRepository expenseRepository;
     private final CategoryRepository categoryRepository;
+    private final AccountRepository accountRepository;
 
     private static final DateTimeFormatter MONTH_FMT = DateTimeFormatter.ofPattern("yyyy-MM");
 
+    @Transactional(readOnly = true)
     public List<ExpenseDTO.Response> findAll(String month, Integer categoryId) {
         List<Expense> expenses;
 
@@ -53,11 +56,14 @@ public class ExpenseService {
     public ExpenseDTO.Response create(ExpenseDTO.Request request) {
         var category = categoryRepository.findById(request.categoryId())
             .orElseThrow(() -> new ResourceNotFoundException("Category", request.categoryId()));
+        var account = accountRepository.findByIdAndIsActiveTrue(request.accountId())
+            .orElseThrow(() -> new ResourceNotFoundException("Account", request.accountId()));
 
         var expense = new Expense();
         expense.setAmount(request.amount());
         expense.setNote(request.note());
         expense.setCategory(category);
+        expense.setAccount(account);
         expense.setExpenseDate(
                 request.expenseDate() != null ? request.expenseDate() : LocalDate.now());
 
@@ -68,10 +74,13 @@ public class ExpenseService {
     public Optional<ExpenseDTO.Response> update(UUID id, ExpenseDTO.Request request) {
         return expenseRepository.findById(id).map(expense -> {
             var category = categoryRepository.findById(request.categoryId())
-                    .orElseThrow(() -> new RuntimeException("Category not found: " + request.categoryId()));
+                    .orElseThrow(() -> new ResourceNotFoundException("Category", request.categoryId()));
+            var account = accountRepository.findByIdAndIsActiveTrue(request.accountId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Account", request.accountId()));
             expense.setAmount(request.amount());
             expense.setNote(request.note());
             expense.setCategory(category);
+            expense.setAccount(account);
             if (request.expenseDate() != null) expense.setExpenseDate(request.expenseDate());
             return toResponse(expenseRepository.save(expense));
         });
@@ -84,6 +93,7 @@ public class ExpenseService {
         expenseRepository.deleteById(id);
     }
 
+    @Transactional(readOnly = true)
     public ExpenseDTO.MonthlySummary getMonthlySummary(String month) {
         if (month == null) month = YearMonth.now().format(MONTH_FMT);
 
@@ -100,6 +110,7 @@ public class ExpenseService {
         return new ExpenseDTO.MonthlySummary(month, total, byCategory);
     }
 
+    @Transactional(readOnly = true)
     public ExpenseDTO.Stats getStats() {
         String thisMonth = YearMonth.now().format(MONTH_FMT);
         String lastMonth = YearMonth.now().minusMonths(1).format(MONTH_FMT);
@@ -132,6 +143,8 @@ public class ExpenseService {
                         e.getCategory().getName(),
                         e.getCategory().getIcon()),
                 e.getExpenseDate(),
-                e.getCreatedAt());
+                e.getCreatedAt(),
+                e.getAccount() != null ? e.getAccount().getId() : null,
+                e.getAccount() != null ? e.getAccount().getName() : null);
     }
 }
