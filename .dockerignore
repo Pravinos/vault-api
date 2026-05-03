@@ -1,0 +1,15 @@
+target/
+.git/
+.gitignore
+.mvn/wrapper/maven-wrapper.jar
+.mvn/wrapper/maven-wrapper.properties
+.DS_Store
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.env
+.env.local
+*.log
