@@ -1,15 +1,16 @@
-# Vault — Personal Finance Assistant
-### Architecture, DB Schema, API Endpoints & Implementation Guide
+# Vault — Personal Finance Assistant with Password-Gate Auth
+### Architecture, Authentication, DB Schema, API Endpoints & Implementation Guide
 
 ---
 
 ## Table of Contents
 1. [Tech Stack](#tech-stack)
-2. [Architecture Overview](#architecture-overview)
-3. [Database Schema](#database-schema)
-4. [API Endpoints](#api-endpoints)
-5. [AI Integration](#ai-integration)
-6. [Implementation Phases](#implementation-phases)
+2. [Authentication Architecture](#authentication-architecture)
+3. [System Architecture Overview](#system-architecture-overview)
+4. [Database Schema](#database-schema)
+5. [API Endpoints](#api-endpoints)
+6. [AI Integration](#ai-integration)
+7. [Implementation Phases](#implementation-phases)
 
 ---
 
@@ -18,46 +19,141 @@
 | Layer | Technology |
 |---|---|
 | Backend | Spring Boot 4.x |
+| Authentication | JWT (JJWT 0.12.6), BCrypt, Spring Security 7.0.5 |
+| Rate Limiting | Bucket4j 8.10.1 (5 attempts per 15 min per IP) |
 | AI Framework | Spring AI |
 | Local LLM | LM Studio (OpenAI-compatible local server) |
 | Cloud LLM | Groq API (llama3-70b-8192 — free tier) |
-| Database | PostgreSQL 16 |
+| Database | PostgreSQL 17 |
 | Frontend | Next.js (App Router) |
-| Auth | Spring Security + JWT |
 | Build | Maven |
 
 ---
 
-## Architecture Overview
+## Authentication Architecture
+
+### Model
+
+Vault uses **single-password protection** — one shared password guards all data. No user registration, no multi-user support.
+
+### Security Filter Chain
+
+```
+HTTP Request
+     │
+     ▼
+[CorsFilter]
+│  └─ Allow requests from FRONTEND_URL with credentials
+│
+▼
+[RateLimitFilter]
+│  └─ Only for /auth/setup & /auth/login
+│  └─ 5 tokens per 15 minutes per IP
+│  └─ Proxy-aware (X-Forwarded-For, X-Real-IP)
+│  └─ Return 429 if limit exceeded
+│
+▼
+[JwtFilter]
+│  └─ Extract JWT from HttpOnly cookie
+│  └─ Validate signature & expiry with HMAC SHA-256
+│  └─ Populate SecurityContext if valid
+│  └─ Otherwise, leave anonymous (endpoints decide who can proceed)
+│
+▼
+[Spring Security Authorization]
+│  ├─ GET  /api/v1/auth/status    → ALLOW (public)
+│  ├─ POST /api/v1/auth/setup     → ALLOW (public, rate limited)
+│  ├─ POST /api/v1/auth/login     → ALLOW (public, rate limited)
+│  └─ All other endpoints         → REQUIRE Authentication
+│
+▼
+Controller Endpoint
+```
+
+### Cookie vs. Bearer Token
+
+Vault uses **HttpOnly cookies** instead of Bearer tokens:
+
+| Aspect | Cookie (HttpOnly) | Bearer Token |
+|--------|------------------|--------------|
+| Stored in | Browser cookie store | localStorage/sessionStorage |
+| Sent automatically | Yes (same-origin by default) | Must be manually added to requests |
+| Accessible to JavaScript | No (HttpOnly flag) | Yes (vulnerable to XSS) |
+| Cross-origin submission | Requires SameSite=None + Secure | Requires manual header setup |
+
+**For cross-origin (Render + Vercel):**
+- Set `SameSite=None` and `Secure=true`
+- Set `allowCredentials=true` in CORS config
+- Browser automatically includes cookie in all cross-origin requests
+
+---
+
+## System Architecture Overview
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                        Next.js Frontend                          │
-│  Dashboard │ Accounts │ Expenses │ Income │ Goals │ Chat UI      │
+│  [Setup] │ Login │ Dashboard │ Accounts │ Expenses │ Chat │      │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │ Authentication Flow (in browser)                           │ │
+│  │ 1. GET /auth/status (check if configured)                 │ │
+│  │ 2. Show setup form (first time) or login form             │ │
+│  │ 3. POST /setup or /login                                 │ │
+│  │ 4. Receive JWT in HttpOnly cookie (automatic)            │ │
+│  │ 5. Cookie auto-included in all subsequent requests       │ │
+│  └────────────────────────────────────────────────────────────┘ │
 └───────────────────────────┬──────────────────────────────────────┘
-                            │ REST / JSON
+                            │ HTTPS / REST / JSON
 ┌───────────────────────────▼──────────────────────────────────────┐
 │                     Spring Boot Backend                          │
 │                                                                  │
-│  ┌─────────────┐   ┌──────────────┐   ┌────────────────────┐    │
-│  │  REST API   │   │  AI Service  │   │     Scheduler      │    │
-│  │ Controllers │   │  Spring AI   │   │  Weekly Summary    │    │
-│  └──────┬──────┘   └──────┬───────┘   └─────────┬──────────┘    │
-│         │                 │                      │               │
-│  ┌──────▼─────────────────▼──────────────────────▼───────────┐   │
-│  │                  LLM Provider Router                      │   │
-│  │  task_type + user preference → model selection strategy   │   │
-│  │  LM Studio (local) │ Groq (cloud) │ per-task defaults     │   │
-│  └───────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ Security Layer (Filters & Configuration)                │   │
+│  │ ┌──────────────┐   ┌────────────────┐   ┌──────────────┐│   │
+│  │ │ CORS Config  │──>│RateLimitFilter │──>│  JwtFilter   ││   │
+│  │ │ credentials  │   │ 5/15min per IP │   │ Validates    ││   │
+│  │ │ true         │   │ proxy-aware    │   │ JWT & cookie ││   │
+│  │ └──────────────┘   └────────────────┘   └──────────────┘│   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                          │                                       │
+│  ┌──────────────────────▼─────────────────────────────────────┐ │
+│  │                    REST Controllers                        │ │
+│  │  ┌─────────────┐   ┌────────────┐   ┌───────────────────┐ │ │
+│  │  │AuthController│  │API Endpoints│  │     AI Service    │ │ │
+│  │  │/auth/*     │  │/expenses*  │  │   (protected)     │ │ │
+│  │  │(public)    │  │/accounts*  │  │   /ai/chat        │ │ │
+│  │  │            │  │/goals*     │  │   /ai/config      │ │ │
+│  │  │JWT in cookie│  │            │  │   /ai/summaries   │ │ │
+│  │  └─────────────┘  └────────────┘  └───────────────────┘ │ │
+│  │         │               │                    │            │ │
+│  └─────────┼───────────────┼────────────────────┼────────────┘ │
+│            │               │                    │               │
+│  ┌─────────▼───────────────▼────────────────────▼────────────┐ │
+│  │              Service Layer                               │ │
+│  │  AccountService │ ExpenseService │ GoalService │ etc.    │ │
+│  └──────────────────────────────────────────────────────────┘ │
+│            │                                                   │
+│  ┌─────────▼──────────────────────────────────────────────────┐ │
+│  │         LLM Provider Router (for AI)                      │ │
+│  │  ┌──────────────────────────────────────────────────────┐ │ │
+│  │  │ Task = CHAT       → chat_provider & chat_model       │ │ │
+│  │  │ Task = SUMMARY    → summary_provider & summary_model │ │ │
+│  │  └──────────────────────────────────────────────────────┘ │ │
+│  │         ↓                                    ↓             │ │
+│  │    [LM Studio]                         [Groq API]         │ │
+│  │  localhost:1234                    https://api.groq.com   │ │
+│  └──────────────────────────────────────────────────────────┘ │
 └───────────────────────────┬──────────────────────────────────────┘
                             │
 ┌───────────────────────────▼──────────────────────────────────────┐
 │                         PostgreSQL                               │
+│                      (Supabase hosted)                           │
 │                                                                  │
-│  accounts │ investment_details │ investment_checkpoints          │
-│  expenses │ categories                                           │
-│  income   │ income_categories                                    │
-│  goals    │ weekly_summaries   │ llm_provider_config             │
+│  app_config (V14)                 accounts │ goals              │
+│  ├─ key: "vault_password_hash"     investments │ checkpoints   │
+│  └─ value: "$2a$10$BCRYPT..."     expenses │ categories         │
+│                                   income │ summaries            │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -314,13 +410,83 @@ ALTER TABLE expenses ALTER COLUMN account_id SET NOT NULL;
 
 ---
 
+### V14 — `app_config`
+
+Stores application configuration as key-value pairs. Used to persist the vault password hash on first setup.
+
+```sql
+CREATE TABLE app_config (
+    key   VARCHAR(100) PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+INSERT INTO app_config (key, value)
+VALUES ('vault_password_hash', '$2a$10$BCRYPT_ENCODED_HASH_HERE');
+```
+
+**Usage:**
+- `AuthController.status()` checks if this table contains the `vault_password_hash` key
+- `AuthController.setup()` stores the BCrypt-hashed password in this table
+- `AuthController.login()` retrieves the hash for password verification
+- Future expansions can store other config (branding, feature flags, etc.) as additional rows
+
+**Security Notes:**
+- The value is a BCrypt hash, never plain text
+- BCrypt includes salt, so same password always produces different hashes
+- No indexes needed — single row per key lookup is negligible
+
+---
+
 ## API Endpoints
 
 Base URL: `http://localhost:8080/api/v1`
 
+### Authentication
+
+| Method | Endpoint | Public | Rate Limited | Description |
+|--------|----------|--------|--------------|-------------|
+| GET | `/auth/status` | Yes | No | Check if vault is configured |
+| POST | `/auth/setup` | Yes | Yes (5/15m) | Configure vault with password |
+| POST | `/auth/login` | Yes | Yes (5/15m) | Authenticate with password |
+| GET | `/auth/verify` | No | No | Verify JWT is valid |
+| POST | `/auth/refresh` | No | No | Issue new JWT token |
+| POST | `/auth/logout` | No | No | Clear authentication cookie |
+
+**Request/Response Examples:**
+
+```json
+GET /api/v1/auth/status
+→ { "configured": true }
+
+POST /api/v1/auth/setup
+← { "password": "my-password" }
+→ { "message": "Vault configured successfully" }
+Set-Cookie: vault_token=JWT...; HttpOnly; Secure; SameSite=None
+
+POST /api/v1/auth/login
+← { "password": "my-password" }
+→ { "message": "Login successful" }
+Set-Cookie: vault_token=JWT...; HttpOnly; Secure; SameSite=None
+
+GET /api/v1/auth/verify
+→ { "valid": true }
+
+POST /api/v1/auth/refresh
+→ { "message": "Token refreshed" }
+Set-Cookie: vault_token=JWT...; HttpOnly; Secure; SameSite=None
+
+POST /api/v1/auth/logout
+→ { "message": "Logged out" }
+Set-Cookie: vault_token=; Max-Age=0
+```
+
 ---
 
-### Accounts
+### Protected Endpoints
+
+All endpoints below require a valid JWT in the `vault_token` HttpOnly cookie.
+
+#### Accounts
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -807,132 +973,85 @@ public void generateWeeklySummary() {
 
 ---
 
-### Phase 1 — Core Data Layer ✅ Implemented
+### ✅ Phase 1 — Core Data Layer
 
-**Goal:** A working Spring Boot app with a Postgres database and REST endpoints.
+**Status:** Implemented
 
-**Implemented:**
-- Spring Boot 4.x backend with PostgreSQL and Flyway
-- Entities: `Expense`, `Category`, `Goal`, `WeeklySummary`
-- Repositories with custom queries (monthly totals, category sums)
-- Service layer with business logic
-- REST controllers for `/expenses`, `/goals`, `/categories`, `/summaries`
-- Input validation (`@Valid`, `@NotNull`, custom exception handler)
-- Flyway migrations V1–V4 and category seeding
+Spring Boot 4.x backend with PostgreSQL and Flyway managing 14 migrations. Entities for expenses, categories, goals, accounts, income, and summaries. Full service layer with business logic and REST controllers.
 
 ---
 
-### Phase 2 — Next.js Frontend ✅ Implemented (basic)
+### ✅ Phase 2 — Next.js Frontend (Basic)
 
-**Goal:** Dashboard and UI for expense and goals tracking.
+**Status:** Implemented
 
-**Implemented:**
-- Next.js App Router frontend
-- Dashboard, expenses, and goals pages
-- Typed API client (`lib/api.ts`)
-- Connected to the Spring Boot backend
+Next.js App Router with dashboard, expenses, goals, accounts, and income pages. Typed API client with authentication support.
 
 ---
 
-### Phase 2.5 — Accounts & Income ⬅ Current Phase
+### ✅ Phase 2.5 — Accounts & Income
 
-**Goal:** Add multi-account support, income tracking, and investment performance monitoring.
+**Status:** Implemented
 
-**Backend tasks:**
-1. Flyway migrations V5–V11 (accounts, investment details, investment checkpoints, income categories, income, account FK on expenses)
-2. New entities: `Account`, `InvestmentDetail`, `InvestmentCheckpoint`, `IncomeCategory`, `Income`
-3. Update `Expense` entity with `account` FK
-4. New repositories with balance sum queries
-5. `AccountService` with derived balance calculations (calculated, manual, investment returns)
-6. `InvestmentCheckpointService`
-7. `IncomeService` + `IncomeCategoryService`
-8. New controllers: `AccountController`, `IncomeController`, `IncomeCategoryController`
-9. Update `ExpenseService` / `ExpenseController` to require `accountId`
+Multi-account support (Checking, Savings, Investment) with derived balance calculations. Income tracking by category. Investment checkpoints for return tracking. Manual balance overrides. All linked to accounts with proper referential integrity.
 
-**Frontend tasks:**
-1. New TypeScript types for Account, Income, Checkpoint
-2. New API client functions
-3. Accounts list page with balance cards and weekly update nudge
-4. Create/edit account form (with conditional investment fields)
-5. Manual balance update modal
-6. Investment account detail page with checkpoint history and performance chart
-7. Income list page (mirrors expenses page)
-8. Income form (mirrors expense form)
-9. Update expense form to require account selection
-10. Dashboard: accounts summary strip, net worth figure, stale balance nudge
-
-**Key design decisions:**
-- `calculated_balance` is always derived at query time — never stored
-- `manual_balance` is a user-entered snapshot, updated on demand with a weekly prompt
-- Investment accounts have an additional `current_value` from the latest checkpoint, enabling return % calculation
-- No transfers between accounts in this phase — income and expenses are always external money in/out
-- All monetary values use `BigDecimal` (never `double`)
-- Soft delete on accounts (`is_active = false`)
-
-**Deliverable:** Full account management, income tracking, and investment performance monitoring alongside the existing expense and goals features.
+**Migrations:** V5–V11 (accounts, investment details, checkpoints, income categories, income)
 
 ---
 
-### Phase 3 — AI Integration
+### ✅ Phase 5 — Authentication & Security (Reordered)
 
-**Goal:** Connect the app to LM Studio locally and Groq as a cloud option, with function calling so the LLM can query real data. The user can choose which provider and model to use per task type from a settings panel.
+**Status:** Implemented
 
-**Tasks:**
-1. Add Spring AI dependency: `spring-ai-openai-spring-boot-starter` (used for both LM Studio and Groq)
-2. Define two `OpenAiChatModel` beans in `AiConfig.java` — one for LM Studio (`localhost:1234/v1`), one for Groq
-3. Configure both in `application.yml` with separate base URLs and API keys
-4. Implement `FinanceTools` with all `@Tool` methods including accounts, income, and net cash flow
-5. Implement `LlmProviderRouter` with `TaskType` enum (`CHAT`, `SUMMARY`) and per-task model selection
-6. Implement model discovery endpoints (`GET /ai/models/lmstudio`, `GET /ai/models/groq`)
-7. Implement `GET /ai/config` and `PATCH /ai/config` for reading and updating per-task provider/model
-8. Implement `POST /ai/chat` with conversation context support — uses chat provider/model
-9. Build chat UI in Next.js — message thread + input box
-10. Build AI settings panel in Next.js:
-    - Two sections: "Chat" and "Weekly Summary"
-    - Each shows a provider toggle (LM Studio / Groq) and a model dropdown populated from the discovery endpoints
-    - LM Studio section shows a connectivity status indicator (green/red dot)
-    - Summary section notes that Groq is recommended for best quality
-11. Test with real questions: "How much did I spend on food?", "What's my net worth?", "How is my Revolut investment performing?"
+**Features:**
+- Single-password protection (no user registration)
+- BCrypt password hashing with automatic salt
+- JWT tokens with 24-hour expiry (HMAC SHA-256)
+- HttpOnly cookies for XSS protection
+- Rate limiting: 5 attempts per 15 minutes per IP
+- Proxy-aware IP detection (X-Forwarded-For, X-Real-IP)
+- CORS with credentials support for Render + Vercel
+- 6 auth endpoints: `/auth/status`, `/auth/setup`, `/auth/login`, `/auth/verify`, `/auth/refresh`, `/auth/logout`
+- AppConfig table (V14) for storing vault password hash
 
-**Deliverable:** A working chat interface that reasons over expenses, income, accounts, and goals, with a settings panel to control which model handles each type of task.
+**Migration:** V14 (`app_config` table)
+
+**Components:** SecurityConfig, JwtUtil, JwtFilter, RateLimitFilter, CookieUtil, AuthController
 
 ---
 
-### Phase 4 — Weekly Summary Automation
+### ✅ Phase 3 — AI Integration
 
-**Goal:** Automated weekly AI-generated reports that appear on the dashboard, always using the summary provider (Groq by default) for the best quality output.
+**Status:** Implemented
 
-**Tasks:**
-1. Implement `WeeklyDataSnapshot` builder — includes income, net cash flow, and account summaries alongside existing expense and goal data
-2. Implement the `@Scheduled` job — calls `llmProviderRouter.getClientForTask(TaskType.SUMMARY)`
-3. Implement manual trigger `POST /ai/summaries/generate`
-4. Save summaries to `weekly_summaries` with both `provider` and `model` recorded
-5. Build the summary card on the dashboard — shows provider and model used as a small badge
-6. Build the summary history page
+**Features:**
+- Spring AI integration with dual OpenAiChatModel beans (LM Studio + Groq)
+- `FinanceTools` with `@Tool` methods for financial data queries:
+  - getExpensesByCategory, getBudgetStatus, getGoalProgress
+  - getDailySpending, getCategoryTrend, getAccountSummaries
+  - getIncomeByCategory, getNetCashFlow
+- `LlmProviderRouter` with TaskType enum (CHAT, SUMMARY) and per-task model routing
+- Model discovery endpoints: `GET /ai/models/lmstudio`, `GET /ai/models/groq`
+- Config endpoints: `GET /ai/config`, `PATCH /ai/config` for user-controlled provider/model selection
+- Chat endpoint: `POST /ai/chat` with conversation context support
+- Frontend: Chat UI, AI settings panel with provider/model toggles, LM Studio connectivity indicator
 
-**Deliverable:** Every Monday morning a fresh summary covering spending, income, net cash flow, and investment performance is waiting on the dashboard, generated by the configured summary model.
+**Deliverable:** Full chat interface that reasons over real expense, income, account, and goal data with user-controlled provider/model selection per task.
 
 ---
 
-### Phase 5 — Auth & Polish
+### ✅ Phase 4 — Weekly Summary Automation
 
-**Goal:** Secure the app and add quality-of-life improvements.
+**Status:** Implemented
 
-**Tasks:**
-1. Add Spring Security with JWT — register, login, refresh token
-2. Secure all API routes (public: `/auth/**`, protected: everything else)
-3. Add JWT handling to the Next.js frontend
-4. Add expense and income bulk delete
-5. Add goal contribution history
-6. Add transfer support between accounts (moves money from one account to another atomically)
-7. Add a smart alert system:
-   - "You've spent 80% of last month's average on Food with 2 weeks to go"
-   - "You're behind on your Japan trip goal — you need €X more per month"
-   - "Your Revolut investment is up 12% — consider logging a checkpoint"
-8. Add Swagger UI / OpenAPI docs (`springdoc-openapi`)
-9. Dockerize: `Dockerfile` for Spring Boot, `docker-compose.yml` with Postgres + the app
+**Features:**
+- `WeeklyDataSnapshot` builder aggregating income, net cash flow, accounts, expenses, and goals
+- Scheduled job: `@Scheduled(cron = "0 0 8 * * MON")` running every Monday at 8am via `LlmProviderRouter.getClientForTask(TaskType.SUMMARY)`
+- Manual trigger: `POST /ai/summaries/generate` for on-demand summary generation
+- Summaries saved with provider and model metadata for audit trail
+- Frontend: Summary card on dashboard with provider/model badge, full summary history page
 
-**Deliverable:** A production-ready, secured, fully documented app.
+**Deliverable:** Automated weekly AI-generated reports every Monday covering spending, income, net cash flow, and investment performance. Users can also trigger manual summaries on demand.
 
 ---
 
@@ -1061,3 +1180,106 @@ vault/
     │   └── types.ts                      # shared TypeScript types
     └── package.json
 ```
+
+---
+
+## Deployment & Security Guide
+
+### Production Deployment (Render + Vercel)
+
+#### Backend (Render)
+
+1. **Create Render Web Service** pointing to this repository
+2. **Set Environment Variables:**
+   ```
+   DATABASE_URL=postgresql://user:pass@host:5432/vault_db
+   VAULT_JWT_SECRET=<use `openssl rand -base64 32`>
+   VAULT_COOKIE_SECURE=true
+   VAULT_COOKIE_SAME_SITE=None
+   FRONTEND_URL=https://your-app.vercel.app
+   GROQ_API_KEY=<your-groq-api-key>
+   ```
+3. **Build Command:** `mvn clean package -DskipTests`
+4. **Start Command:** `java -jar target/vault-api.jar`
+5. **Health Check:** `GET /actuator/health` (Spring Boot default endpoint)
+
+#### Frontend (Vercel)
+
+1. **Deploy Next.js to Vercel** (connect GitHub repo)
+2. **Set Environment Variables:**
+   ```
+   NEXT_PUBLIC_API_URL=https://your-render-backend.onrender.com
+   ```
+3. **Vercel will auto-detect Next.js** and build/deploy on push
+
+### Security Checklist
+
+- ✅ **JWT Secret**: At least 32 random characters, never hardcoded, stored in Render environment variables
+- ✅ **HTTPS Enforced**: Both Render and Vercel enforce HTTPS by default
+- ✅ **Cookies Secure**: `Secure=true` flag set in production, only sent over HTTPS
+- ✅ **CORS Configured**: Limited to frontend domain only, `allowCredentials=true`
+- ✅ **Rate Limiting**: 5 attempts per 15 minutes per IP on auth endpoints
+- ✅ **Password Hashing**: BCrypt with automatic salt, never plain text
+- ✅ **Proxy Awareness**: IP detection checks `X-Forwarded-For` and `X-Real-IP` headers
+- ✅ **No Default Users**: No hardcoded credentials, password gate only
+- ✅ **Database Backups**: Enable automated backups in Supabase dashboard
+- ✅ **Stateless Sessions**: JWT in cookies, no server-side session store required
+
+### Local Development
+
+**Environment variables for `.env`:**
+```properties
+DB_PASSWORD=postgres
+VAULT_JWT_SECRET=local-dev-secret-change-in-prod
+VAULT_COOKIE_SECURE=false
+VAULT_COOKIE_SAME_SITE=Strict
+FRONTEND_URL=http://localhost:3000
+```
+
+**Start Stack:**
+1. Start Postgres: `docker-compose up -d postgres` (or use local instance)
+2. Start Backend: `./mvnw spring-boot:run`
+3. Start Frontend: `cd frontend && npm run dev`
+4. Visit: `http://localhost:3000`
+
+### Monitoring & Logs
+
+**Render Console:**
+- View deployment logs in real-time
+- Check for startup errors or migration failures
+- Monitor application performance metrics
+
+**Application Logs in Production:**
+- JWT validation failures
+- Rate limit hits (HTTP 429)
+- Database migration errors at startup
+- Authentication failures
+
+**Recommended Setup:**
+- Enable Render's log drain to external logging service (DataDog, LogRocket, etc.)
+- Set up alerts for repeated 401/403 responses (possible brute-force attempts)
+- Monitor database connection pool usage
+
+### Disaster Recovery
+
+1. **Database Backups**: Supabase provides point-in-time recovery
+2. **Source Code**: GitHub is the source of truth for all code
+3. **Secrets**: Render environment variables are encrypted, no secrets in code
+4. **Deployment**: Redeploy from git push to Render at any time
+
+### Scaling Considerations
+
+- **Stateless**: Each request is independent, scales horizontally
+- **Database**: Supabase handles connection pooling and scaling
+- **Rate Limiting**: Per-IP in-memory buckets; for multi-instance, consider Redis-backed storage
+- **JWT Expiry**: 24 hours is reasonable; no token revocation list required since tokens are ephemeral
+
+### Troubleshooting
+
+| Issue | Diagnosis | Fix |
+|-------|-----------|-----|
+| Login fails with 401 | Check if vault is configured: `GET /auth/status` | Call `/auth/setup` first |
+| 429 Too Many Requests | Rate limit hit on `/auth/login` or `/auth/setup` | Wait 15 minutes or check client IP |
+| Cookie not sent cross-origin | `SameSite=Strict` in non-HTTPS environment | Set `VAULT_COOKIE_SAME_SITE=None` + HTTPS |
+| Database migration fails on startup | Schema mismatch or missing migration file | Check Flyway history table in Supabase |
+| JWT validation error in logs | Token expired or signature mismatch | User should refresh with `/auth/refresh` endpoint |

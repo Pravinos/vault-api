@@ -90,4 +90,14 @@ public interface ExpenseRepository extends JpaRepository<Expense, UUID> {
 
     @Query("SELECT SUM(e.amount) FROM Expense e WHERE e.account.id = :accountId")
     BigDecimal sumByAccountId(@Param("accountId") UUID accountId);
+
+    @Query("""
+            SELECT c.name, SUM(e.amount)
+            FROM Expense e JOIN e.category c
+            WHERE e.expenseDate BETWEEN :start AND :end
+            GROUP BY c.name
+            """)
+    List<Object[]> sumByCategoryBetweenDatesRaw(
+            @Param("start") LocalDate start,
+            @Param("end") LocalDate end);
 }

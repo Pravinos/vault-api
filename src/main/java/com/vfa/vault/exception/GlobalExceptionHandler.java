@@ -44,6 +44,12 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponse(400, ex.getMessage(), LocalDateTime.now()));
     }
 
+    @ExceptionHandler(LlmServiceUnavailableException.class)
+    public ResponseEntity<ErrorResponse> handleLlmUnavailable(LlmServiceUnavailableException ex) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(new ErrorResponse(503, ex.getMessage(), LocalDateTime.now()));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleGeneric(Exception ex) {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
