@@ -53,6 +53,14 @@ public class AccountService {
         account.setName(dto.name());
         account.setAccountType(dto.accountType());
         account.setOpeningBalance(dto.openingBalance());
+
+        // If an opening balance is provided, use it as the initial manual balance too
+        if (dto.openingBalance() != null
+                && dto.openingBalance().compareTo(BigDecimal.ZERO) > 0) {
+            account.setManualBalance(dto.openingBalance());
+            account.setManualBalanceUpdatedAt(LocalDateTime.now());
+        }
+
         account = accountRepository.save(account);
 
         if (dto.accountType() == AccountType.INVESTMENT
