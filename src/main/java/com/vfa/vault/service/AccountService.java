@@ -35,7 +35,7 @@ public class AccountService {
 
     @Transactional(readOnly = true)
     public List<AccountDTO.Response> getAllAccounts() {
-        return accountRepository.findByIsActiveTrue().stream()
+        return accountRepository.findAllActiveOrderByLastUpdatedDesc().stream()
                 .map(this::buildResponse)
                 .toList();
     }
