@@ -1,10 +1,13 @@
 package com.vfa.vault.service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
-import java.time.YearMonth;
-import java.time.format.DateTimeFormatter;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -14,10 +17,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.vfa.vault.ai.LlmProviderRouter;
-import com.vfa.vault.dto.WeeklySummaryDTO;
-import com.vfa.vault.entity.Income;
+import com.vfa.vault.ai.WeeklyDataSnapshot;
+import com.vfa.vault.dto.AccountDTO;
+import com.vfa.vault.dto.GoalDTO;
+import com.vfa.vault.dto.WeeklySummaryResponseDTO;
 import com.vfa.vault.entity.LlmProviderConfig;
 import com.vfa.vault.entity.WeeklySummary;
+import com.vfa.vault.exception.LlmServiceUnavailableException;
 import com.vfa.vault.exception.ResourceNotFoundException;
 import com.vfa.vault.repository.ExpenseRepository;
 import com.vfa.vault.repository.IncomeRepository;
@@ -40,164 +46,268 @@ public class WeeklySummaryService {
     private final GoalService goalService;
     private final AccountService accountService;
 
-    private static final DateTimeFormatter MONTH_FMT = DateTimeFormatter.ofPattern("yyyy-MM");
-
     @Transactional(readOnly = true)
-    public List<WeeklySummaryDTO.Response> findAll() {
+    public List<WeeklySummaryResponseDTO> findAll() {
         return weeklySummaryRepository.findAllByOrderByGeneratedAtDesc()
-                .stream().map(this::toResponse).toList();
+                .stream()
+                .map(this::toResponse)
+                .toList();
     }
 
     @Transactional(readOnly = true)
-    public Optional<WeeklySummaryDTO.Response> findLatest() {
+    public Optional<WeeklySummaryResponseDTO> findLatest() {
         return weeklySummaryRepository.findTopByOrderByGeneratedAtDesc()
                 .map(this::toResponse);
     }
 
     @Transactional(readOnly = true)
-    public WeeklySummaryDTO.Response findById(UUID id) {
+    public WeeklySummaryResponseDTO findById(UUID id) {
         return weeklySummaryRepository.findById(id)
                 .map(this::toResponse)
                 .orElseThrow(() -> new ResourceNotFoundException("WeeklySummary", id));
     }
 
-        @Transactional
-        public WeeklySummaryDTO.Response generate() {
-        log.info("Starting weekly summary generation...");
-        try {
-            log.info("Loading LLM config...");
-            LlmProviderConfig config = configRepo.findById(1)
+    @Transactional
+    public WeeklySummaryResponseDTO generateNow() {
+        return generateAndSave()
+                .map(this::toResponse)
+                .orElseThrow(() -> new LlmServiceUnavailableException(
+                        "Summary generation is currently unavailable. Verify LM Studio/Groq connectivity and credentials."));
+    }
+
+    @Transactional
+    public void generateScheduled() {
+        Optional<WeeklySummary> generated = generateAndSave();
+        if (generated.isPresent()) {
+            WeeklySummary summary = generated.get();
+            log.info("Weekly summary generated using {}/{}", summary.getProvider(), summary.getModel());
+        } else {
+            log.warn("Weekly summary generation skipped due to provider/model call failure");
+        }
+    }
+
+    private Optional<WeeklySummary> generateAndSave() {
+        LlmProviderConfig config = configRepo.findById(1)
                 .orElseThrow(() -> new IllegalStateException("llm_provider_config row not found"));
-            log.info("Using provider={}, model={}", config.getSummaryProvider(), config.getSummaryModel());
 
-            log.info("Building snapshot...");
-            WeeklyDataSnapshot snapshot = buildSnapshot();
-            log.info("Snapshot built for week {} to {}", snapshot.weekStart(), snapshot.weekEnd());
+        WeeklyDataSnapshot snapshot = buildSnapshot();
+        ChatClient client = llmProviderRouter.getClientForTask(LlmProviderRouter.TaskType.SUMMARY);
 
-            String prompt = """
-                Here is the user's financial data for the past week (%s to %s):
+        String summaryText;
+        try {
+            summaryText = client.prompt()
+                    .user(buildPrompt(snapshot))
+                    .call()
+                    .content();
+        } catch (Exception e) {
+            log.error("Weekly summary generation failed: {}", e.getMessage(), e);
+            return Optional.empty();
+        }
 
-                Total spent: EUR %.2f
-                Total income: EUR %.2f
-                Net cash flow: EUR %.2f
-                Spending by category: %s
-                Income by category: %s
-                Goal progress: %s
-                Account balances: %s
+        if (summaryText == null || summaryText.isBlank()) {
+            log.warn("Weekly summary generation returned an empty response; skipping persistence");
+            return Optional.empty();
+        }
 
-                Write a short, friendly weekly summary (3-5 sentences). Include:
-                - Where most money went
-                - One practical tip based on the data
-                - Progress toward any active goals
-                - Any notable investment account performance if applicable
+        WeeklySummary summary = new WeeklySummary();
+        summary.setWeekStart(snapshot.weekStart());
+        summary.setWeekEnd(snapshot.weekEnd());
+        summary.setSummaryText(summaryText);
+        summary.setTotalSpent(snapshot.totalSpent());
+        summary.setProvider(config.getSummaryProvider());
+        summary.setModel(config.getSummaryModel());
+        summary.setGeneratedAt(LocalDateTime.now());
+
+        return Optional.of(weeklySummaryRepository.save(summary));
+    }
+
+    private WeeklyDataSnapshot buildSnapshot() {
+        LocalDate weekEnd = LocalDate.now().minusDays(1);
+        LocalDate weekStart = weekEnd.minusDays(6);
+
+        Map<String, BigDecimal> spendingByCategory = expenseRepository
+                .sumByCategoryBetweenDatesRaw(weekStart, weekEnd)
+                .stream()
+                .collect(Collectors.toMap(
+                        row -> (String) row[0],
+                        row -> (BigDecimal) row[1],
+                        (left, right) -> left,
+                        LinkedHashMap::new));
+
+        BigDecimal totalSpent = spendingByCategory.values().stream()
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        Map<String, BigDecimal> incomeByCategory = incomeRepository
+                .sumByCategoryBetweenDatesRaw(weekStart, weekEnd)
+                .stream()
+                .collect(Collectors.toMap(
+                        row -> (String) row[0],
+                        row -> (BigDecimal) row[1],
+                        (left, right) -> left,
+                        LinkedHashMap::new));
+
+        BigDecimal totalIncome = incomeByCategory.values().stream()
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal netCashFlow = totalIncome.subtract(totalSpent);
+
+        List<WeeklyDataSnapshot.GoalSnapshotItem> goals = goalService.findAllActive()
+                .stream()
+                .map(this::toGoalSnapshot)
+                .toList();
+
+        List<WeeklyDataSnapshot.AccountSnapshotItem> accounts = accountService.getAllAccounts()
+                .stream()
+                .map(this::toAccountSnapshot)
+                .toList();
+
+        return new WeeklyDataSnapshot(
+                weekStart,
+                weekEnd,
+                totalSpent,
+                totalIncome,
+                netCashFlow,
+                spendingByCategory,
+                incomeByCategory,
+                goals,
+                accounts);
+    }
+
+    private WeeklyDataSnapshot.GoalSnapshotItem toGoalSnapshot(GoalDTO.Response goal) {
+        BigDecimal target = goal.targetAmount() != null ? goal.targetAmount() : BigDecimal.ZERO;
+        BigDecimal saved = goal.savedAmount() != null ? goal.savedAmount() : BigDecimal.ZERO;
+
+        BigDecimal percentage = target.compareTo(BigDecimal.ZERO) == 0
+                ? BigDecimal.ZERO
+                : saved.divide(target, 4, RoundingMode.HALF_UP)
+                        .multiply(BigDecimal.valueOf(100));
+
+        Long daysRemaining = goal.deadline() != null
+                ? ChronoUnit.DAYS.between(LocalDate.now(), goal.deadline())
+                : null;
+
+        return new WeeklyDataSnapshot.GoalSnapshotItem(
+                goal.name(),
+                target,
+                saved,
+                percentage,
+                daysRemaining);
+    }
+
+    private WeeklyDataSnapshot.AccountSnapshotItem toAccountSnapshot(AccountDTO.Response account) {
+        return new WeeklyDataSnapshot.AccountSnapshotItem(
+                account.name(),
+                account.accountType().name(),
+                account.calculatedBalance(),
+                account.manualBalance(),
+                account.contributedAmount(),
+                account.currentValue(),
+                account.returnPercentage());
+    }
+
+    private String buildPrompt(WeeklyDataSnapshot snapshot) {
+        return """
+                You are Vault, a personal finance assistant. Analyse this week's financial data and write a concise, friendly summary.
+
+                Period: %s to %s
+
+                SPENDING
+                Total spent: €%.2f
+                By category: %s
+
+                INCOME
+                Total income: €%.2f
+                By category: %s
+
+                NET CASH FLOW: €%.2f
+
+                ACCOUNTS
+                %s
+
+                GOALS
+                %s
+
+                Write a summary of 4-6 sentences covering:
+                1. Where most money was spent this week
+                2. Income vs spending balance
+                3. One practical, specific tip based on the data
+                4. A brief note on goal progress if any goals exist
+                5. If any investment account has a notable return (positive or negative), mention it
+
+                Be specific with amounts. Use the € symbol. Do not use bullet points - write in natural prose paragraphs.
                 """.formatted(
                 snapshot.weekStart(),
                 snapshot.weekEnd(),
-                snapshot.totalSpent().doubleValue(),
-                snapshot.totalIncome().doubleValue(),
-                snapshot.netCashFlow().doubleValue(),
-                snapshot.spendingByCategory(),
-                snapshot.incomeByCategory(),
-                snapshot.goalProgress(),
-                snapshot.accountSummaries());
+                snapshot.totalSpent(),
+                formatCategoryMap(snapshot.spendingByCategory()),
+                snapshot.totalIncome(),
+                formatCategoryMap(snapshot.incomeByCategory()),
+                snapshot.netCashFlow(),
+                formatAccounts(snapshot.accounts()),
+                formatGoals(snapshot.goals()));
+    }
 
-            log.info("Calling LLM...");
-            ChatClient client = llmProviderRouter.getClientForTask(LlmProviderRouter.TaskType.SUMMARY);
-            String summaryText = client.prompt()
-                .user(prompt)
-                .call()
-                .content();
-            log.info("LLM response received, length={}", summaryText != null ? summaryText.length() : 0);
-
-            WeeklySummary summary = new WeeklySummary();
-            summary.setWeekStart(snapshot.weekStart());
-            summary.setWeekEnd(snapshot.weekEnd());
-            summary.setTotalSpent(snapshot.totalSpent());
-            summary.setSummaryText(summaryText != null ? summaryText : "No summary generated.");
-            summary.setProvider(config.getSummaryProvider());
-
-            WeeklySummary saved = weeklySummaryRepository.save(summary);
-            log.info("Weekly summary saved with id={}", saved.getId());
-            return toResponse(saved);
-        } catch (Exception e) {
-            log.error("Weekly summary generation failed: {}", e.getMessage(), e);
-            throw e;
-        }
+    private String formatCategoryMap(Map<String, BigDecimal> map) {
+        if (map.isEmpty()) {
+            return "none";
         }
 
-        private WeeklyDataSnapshot buildSnapshot() {
-        LocalDate weekEnd = LocalDate.now();
-        LocalDate weekStart = weekEnd.minusDays(6);
+        return map.entrySet().stream()
+                .map(e -> e.getKey() + ": €" + e.getValue().setScale(2, RoundingMode.HALF_UP))
+                .collect(Collectors.joining(", "));
+    }
 
-        BigDecimal totalSpent = expenseRepository.findByWeek(weekStart, weekEnd).stream()
-            .map(e -> e.getAmount() != null ? e.getAmount() : BigDecimal.ZERO)
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        List<Income> incomesForMonth = incomeRepository.findByFilters(YearMonth.now().format(MONTH_FMT), null);
-        BigDecimal totalIncome = incomesForMonth.stream()
-            .filter(i -> i.getIncomeDate() != null
-                && !i.getIncomeDate().isBefore(weekStart)
-                && !i.getIncomeDate().isAfter(weekEnd))
-            .map(i -> i.getAmount() != null ? i.getAmount() : BigDecimal.ZERO)
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        String spendingByCategory = expenseRepository.findByWeek(weekStart, weekEnd).stream()
-            .collect(Collectors.groupingBy(
-                e -> e.getCategory() != null ? e.getCategory().getName() : "Other",
-                Collectors.mapping(
-                    e -> e.getAmount() != null ? e.getAmount() : BigDecimal.ZERO,
-                    Collectors.reducing(BigDecimal.ZERO, BigDecimal::add))))
-            .toString();
-
-        String incomeByCategory = incomesForMonth.stream()
-            .filter(i -> i.getIncomeDate() != null
-                && !i.getIncomeDate().isBefore(weekStart)
-                && !i.getIncomeDate().isAfter(weekEnd))
-            .collect(Collectors.groupingBy(
-                i -> i.getIncomeCategory() != null ? i.getIncomeCategory().getName() : "Other",
-                Collectors.mapping(
-                    i -> i.getAmount() != null ? i.getAmount() : BigDecimal.ZERO,
-                    Collectors.reducing(BigDecimal.ZERO, BigDecimal::add))))
-            .toString();
-
-        String goalProgress = goalService.findAllActive().toString();
-        String accountSummaries = accountService.getAllAccounts().toString();
-
-        return new WeeklyDataSnapshot(
-            weekStart,
-            weekEnd,
-            totalSpent != null ? totalSpent : BigDecimal.ZERO,
-            totalIncome != null ? totalIncome : BigDecimal.ZERO,
-            (totalIncome != null ? totalIncome : BigDecimal.ZERO)
-                .subtract(totalSpent != null ? totalSpent : BigDecimal.ZERO),
-            spendingByCategory != null ? spendingByCategory : "{}",
-            incomeByCategory != null ? incomeByCategory : "{}",
-            goalProgress != null ? goalProgress : "[]",
-            accountSummaries != null ? accountSummaries : "[]");
+    private String formatAccounts(List<WeeklyDataSnapshot.AccountSnapshotItem> accounts) {
+        if (accounts.isEmpty()) {
+            return "No active accounts.";
         }
 
-        private record WeeklyDataSnapshot(
-            LocalDate weekStart,
-            LocalDate weekEnd,
-            BigDecimal totalSpent,
-            BigDecimal totalIncome,
-            BigDecimal netCashFlow,
-            String spendingByCategory,
-            String incomeByCategory,
-            String goalProgress,
-            String accountSummaries
-        ) {
+        return accounts.stream()
+                .map(account -> {
+                    String base = "- %s (%s): calculated €%.2f, manual €%.2f".formatted(
+                            account.name(),
+                            account.type(),
+                            account.calculatedBalance(),
+                            account.manualBalance() != null
+                                    ? account.manualBalance()
+                                    : account.calculatedBalance());
+
+                    if ("INVESTMENT".equals(account.type()) && account.currentValue() != null) {
+                        base += ", current value €%.2f (return: %.2f%%)".formatted(
+                                account.currentValue(),
+                                account.returnPercentage() != null
+                                        ? account.returnPercentage()
+                                        : BigDecimal.ZERO);
+                    }
+                    return base;
+                })
+                .collect(Collectors.joining("\n"));
+    }
+
+    private String formatGoals(List<WeeklyDataSnapshot.GoalSnapshotItem> goals) {
+        if (goals.isEmpty()) {
+            return "No active goals.";
         }
 
-    private WeeklySummaryDTO.Response toResponse(WeeklySummary w) {
-        return new WeeklySummaryDTO.Response(
-                w.getId(),
-                w.getWeekStart(),
-                w.getWeekEnd(),
-                w.getSummaryText(),
-                w.getTotalSpent(),
-                w.getGeneratedAt(),
-                w.getProvider()
-        );
+        return goals.stream()
+                .map(goal -> "- %s: €%.2f / €%.2f (%.1f%%)%s".formatted(
+                        goal.name(),
+                        goal.saved(),
+                        goal.target(),
+                        goal.percentage(),
+                        goal.daysRemaining() != null ? ", %d days remaining".formatted(goal.daysRemaining()) : ""))
+                .collect(Collectors.joining("\n"));
+    }
+
+    private WeeklySummaryResponseDTO toResponse(WeeklySummary summary) {
+        return new WeeklySummaryResponseDTO(
+                summary.getId(),
+                summary.getWeekStart(),
+                summary.getWeekEnd(),
+                summary.getSummaryText(),
+                summary.getTotalSpent(),
+                summary.getGeneratedAt(),
+                summary.getProvider(),
+                summary.getModel());
     }
 }

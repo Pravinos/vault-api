@@ -26,7 +26,6 @@ import com.vfa.vault.dto.ChatRequestDTO;
 import com.vfa.vault.dto.ChatResponseDTO;
 import com.vfa.vault.entity.LlmProviderConfig;
 import com.vfa.vault.repository.LlmProviderConfigRepository;
-import com.vfa.vault.service.WeeklySummaryService;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -43,7 +42,6 @@ public class AiController {
     private final ModelDiscoveryService modelDiscoveryService;
     private final ChatMemory chatMemory;
     private final ObjectMapper objectMapper;
-    private final WeeklySummaryService weeklySummaryService;
 
     @PostMapping("/chat")
     public ResponseEntity<ChatResponseDTO> chat(@RequestBody ChatRequestDTO request) {
@@ -119,20 +117,6 @@ public class AiController {
     @GetMapping("/models/groq")
     public ResponseEntity<List<String>> getGroqModels() {
         return ResponseEntity.ok(modelDiscoveryService.getGroqModels());
-    }
-
-    @PostMapping("/summaries/generate")
-    public ResponseEntity<?> generateSummary() {
-        try {
-            return ResponseEntity.ok(weeklySummaryService.generate());
-        } catch (Exception e) {
-            log.error("Generate summary endpoint failed", e);
-            return ResponseEntity.internalServerError().body(Map.of(
-                    "error",
-                    e.getMessage() != null && !e.getMessage().isBlank()
-                            ? e.getMessage()
-                            : e.getClass().getSimpleName()));
-        }
     }
 
     private AiConfigResponseDTO buildConfigResponse(LlmProviderConfig config) {

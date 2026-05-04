@@ -41,6 +41,9 @@ public class WeeklySummary {
     @Column(name = "provider", length = 20)
     private String provider;
 
+    @Column(name = "model", length = 100)
+    private String model;
+
     @PrePersist
     protected void onCreate() {
         generatedAt = LocalDateTime.now();

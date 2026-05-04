@@ -28,6 +28,10 @@ spring:
     baseline-on-migrate: true
     baseline-version: 0
 
+  task:
+    scheduling:
+      enabled: true
+
   ai:
     openai:
       api-key: ${OPENAI_API_KEY:lm-studio}
@@ -73,6 +77,13 @@ springdoc:
     operations-sorter: method
 
 vault:
+  frontend-url: ${FRONTEND_URL:http://localhost:3000}
+  auth:
+    jwt-secret: ${VAULT_JWT_SECRET:please-change-this-secret-to-something-long}
+    jwt-expiry-hours: 24
+    cookie-name: vault_token
+    cookie-secure: ${VAULT_COOKIE_SECURE:true}
+    cookie-same-site: ${VAULT_COOKIE_SAME_SITE:None}
   ai:
     system-prompt: |
       You are Vault, a personal finance assistant. You have access to the

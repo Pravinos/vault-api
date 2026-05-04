@@ -1,11 +1,13 @@
 # Vault API
 
-Spring Boot backend for personal finance tracking with PostgreSQL and Flyway.
+Spring Boot backend for personal finance tracking with PostgreSQL, Flyway, and password-gate authentication.
 
 ## Overview
 
-Vault is a personal finance API that supports:
+Vault is a personal finance API protected by a single vault password with JWT-based authentication. Features include:
 
+- **Password Gate** – single vault password, no user registration, HTTP-only cookie-based JWT auth
+- **Rate Limiting** – 5 login/setup attempts per 15 minutes per IP
 - **Expense Tracking** – by category, linked to an account
 - **Income Tracking** – by category, linked to an account
 - **Account Management** – Checking, Savings, Investment with live balance calculation
@@ -24,9 +26,12 @@ Vault is a personal finance API that supports:
   - Spring Web MVC
   - Spring Data JPA
   - Spring Validation
+  - Spring Security 7.0.5
   - Spring AI (OpenAI-compatible clients)
+- **Authentication** JWT (JJWT 0.12.6), BCrypt, HttpOnly Cookies
+- **Rate Limiting** Bucket4j 8.10.1 (5 attempts per 15 minutes per IP)
 - **Database** PostgreSQL
-- **Migrations** Flyway
+- **Migrations** Flyway 11.14.1
 - **Build** Maven Wrapper
 
 ## Getting Started
@@ -41,11 +46,21 @@ Vault is a personal finance API that supports:
 Create a `.env` file in the project root with:
 
 ```properties
+# Database
 DB_PASSWORD=your_postgres_password
+
+# JWT & Auth (Required for production)
+VAULT_JWT_SECRET=your-long-random-secret-min-32-chars
+VAULT_COOKIE_SECURE=true          # false in local dev, true in production
+VAULT_COOKIE_SAME_SITE=None       # "None" for cross-origin (Vercel), "Strict" for same-site
+FRONTEND_URL=https://your-frontend.vercel.app
+
+# AI Providers (Optional)
 GROQ_API_KEY=your_groq_api_key
-# Optional fallback for OpenAI-compatible auto-config
 OPENAI_API_KEY=lm-studio
 ```
+
+**Important:** `VAULT_JWT_SECRET` must be at least 32 characters of random data (use `openssl rand -base64 32` to generate). This is the signing key for all JWT tokens.
 
 ### Running Locally
 
@@ -66,12 +81,23 @@ Using Maven Wrapper (PowerShell):
 
 - http://localhost:8080
 
+### First-Time Setup
+
+On first run, the vault is unconfigured. Use the frontend to:
+
+1. Check `/api/v1/auth/status` → returns `{"configured": false}`
+2. Call `/api/v1/auth/setup` with your chosen password (min 8 chars)
+3. Password is hashed with BCrypt and stored in the database
+4. Receive a JWT token in an HttpOnly cookie
+5. All subsequent requests include the cookie automatically
+
 ### Configuration
 
 - **Runtime config** → [src/main/resources/application.yaml](src/main/resources/application.yaml)
 - **Database** → PostgreSQL (configured in YAML)
 - **.env import** → Loaded via Spring's `spring.config.import`
 - **Flyway migrations** → Auto-run at startup with validation
+- **Auth config** → `vault.auth.*` in YAML (JWT secret, cookie settings, CORS frontend URL)
 
 ## Project Structure
 
@@ -125,6 +151,22 @@ src/main/java/com/vfa/vault/
 │   ├── InvestmentDetail.java
 │   ├── LlmProviderConfig.java
 │   └── WeeklySummary.java
+├── config/                        # Auth, security, and utility beans
+│   ├── SecurityConfig.java        # Spring Security filter chain, CORS
+│   ├── JwtUtil.java               # JWT generation and validation
+│   ├── JwtFilter.java             # Extracts JWT from cookie, sets SecurityContext
+│   ├── RateLimitFilter.java       # Rate limiting: 5 attempts per 15 min per IP
+│   └── CookieUtil.java            # Builds/clears HttpOnly cookies with SameSite policy
+├── controller/                    # REST API endpoints
+│   ├── AuthController.java        # /api/v1/auth/* (setup, login, verify, refresh, logout, status)
+│   ├── AccountController.java
+│   ├── AiController.java
+│   ├── CategoryController.java
+│   ├── ExpenseController.java
+│   ├── GoalController.java
+│   ├── IncomeCategoryController.java
+│   ├── IncomeController.java
+│   └── WeeklySummaryController.java
 ├── dto/                           # Request/Response contracts
 │   ├── AccountDTO.java
 │   ├── AiConfigResponseDTO.java
@@ -138,13 +180,25 @@ src/main/java/com/vfa/vault/
 │   ├── IncomeDTO.java
 │   ├── InvestmentCheckpointDTO.java
 │   └── WeeklySummaryDTO.java
+├── entity/                        # JPA entity models
+│   ├── AppConfig.java             # Key-value store for vault configuration (password hash)
+│   ├── Account.java
+│   ├── Category.java
+│   ├── Expense.java
+│   ├── Goal.java
+│   ├── Income.java
+│   ├── IncomeCategory.java
+│   ├── InvestmentCheckpoint.java
+│   ├── InvestmentDetail.java
+│   ├── LlmProviderConfig.java
+│   └── WeeklySummary.java
 └── exception/                     # Error handling
     ├── GlobalExceptionHandler.java
     └── ResourceNotFoundException.java
 
 src/main/resources/
 ├── application.yaml               # Spring Boot configuration
-├── db/migration/                  # Flyway SQL migrations
+├── db/migration/                  # Flyway SQL migrations (14 versions)
 │   ├── V1__create_categories.sql
 │   ├── V2__create_expenses.sql
 │   ├── V3__create_goals.sql
@@ -156,11 +210,90 @@ src/main/resources/
 │   ├── V9__create_income.sql
 │   ├── V10__add_default_account.sql
 │   ├── V11__add_account_to_expenses.sql
-│   └── V12__expand_llm_provider_config.sql
+│   ├── V12__expand_llm_provider_config.sql
+│   ├── V13__add_model_to_weekly_summaries.sql
+│   └── V14__create_app_config.sql      # Stores vault_password_hash
 └── templates/                     # Static resources
 ```
 
+## Authentication
+
+### Password Gate Model
+
+Vault uses a **single shared password** to protect all data. There is no user registration or multi-user support:
+
+- **First-time setup**: Call `/api/v1/auth/setup` with your chosen password (min 8 chars)
+- **Password hashing**: BCrypt with automatic salt generation
+- **JWT tokens**: 24-hour expiry, signed with HMAC SHA-256
+- **Storage**: JWT is stored in an **HttpOnly cookie** (not accessible to JavaScript)
+- **CORS support**: Cookies work cross-origin with `SameSite=None; Secure` policy
+
+### Authentication Flow
+
+```
+1. Frontend checks /api/v1/auth/status
+   └─ If configured=false, show setup form
+   └─ If configured=true, redirect to login
+
+2. Setup (first time)
+   POST /api/v1/auth/setup { password: "my-password" }
+   ├─ Password hashed with BCrypt
+   ├─ Hash stored in app_config table
+   └─ Returns Set-Cookie with JWT
+
+3. Login (subsequent times)
+   POST /api/v1/auth/login { password: "my-password" }
+   ├─ Password compared against stored hash
+   └─ On match, returns Set-Cookie with JWT
+   └─ Rate limited: 5 attempts per 15 minutes per IP
+
+4. Authenticated requests
+   GET /api/v1/expenses
+   ├─ Browser automatically includes cookie
+   ├─ JwtFilter extracts token from cookie
+   ├─ Validates JWT signature and expiry
+   └─ If valid, request proceeds; if expired, return 401
+
+5. Refresh
+   POST /api/v1/auth/refresh
+   ├─ Requires valid JWT in cookie
+   └─ Issues new 24-hour token
+
+6. Logout
+   POST /api/v1/auth/logout
+   └─ Clears cookie (maxAge=0)
+```
+
+### Rate Limiting
+
+- **Endpoints protected**: `/api/v1/auth/setup` and `/api/v1/auth/login`
+- **Limit**: 5 attempts per 15 minutes per client IP
+- **IP detection**: Proxy-aware (checks `X-Forwarded-For` and `X-Real-IP` headers)
+- **On limit exceeded**: HTTP 429 with error message
+- **Implementation**: Bucket4j token bucket algorithm per IP
+
+### Deployment Notes
+
+**For local development:**
+- `VAULT_COOKIE_SECURE=false` (cookies work over HTTP)
+- `VAULT_COOKIE_SAME_SITE=Strict` (cookies only sent to same domain)
+
+**For production (Render backend + Vercel frontend):**
+- `VAULT_COOKIE_SECURE=true` (cookies only sent over HTTPS)
+- `VAULT_COOKIE_SAME_SITE=None` (cookies sent in cross-origin requests from Vercel)
+- `FRONTEND_URL=https://your-app.vercel.app` (CORS origin)
+- `VAULT_JWT_SECRET` must be a random 32+ character string
+
 ## Database Schema
+
+### AppConfig
+
+| Column | Type | Constraints |
+|--------|------|-------------|  
+| `key` | VARCHAR(100) | PRIMARY KEY |
+| `value` | TEXT | NOT NULL |
+
+*Stores configuration as key-value pairs. Currently used to store the vault password hash with key=`vault_password_hash`.*
 
 ### Categories
 
@@ -292,7 +425,82 @@ src/main/resources/
 
 **Base Path:** `/api/v1`
 
-**CORS:** Open in local development (`*`)
+**Authentication:** All endpoints except `/auth/status`, `/auth/setup`, and `/auth/login` require a valid JWT in an HttpOnly cookie.
+
+**CORS:** Configured to allow the frontend URL specified in `FRONTEND_URL` environment variable with credentials (`allowCredentials=true`).
+
+### Authentication
+
+| Method | Endpoint | Description | Public? |
+|--------|----------|-------------|----------|
+| GET | `/auth/status` | Check if vault is configured | Yes |
+| POST | `/auth/setup` | Configure vault with password (first-time only) | Yes* |
+| POST | `/auth/login` | Authenticate with vault password | Yes* |
+| GET | `/auth/verify` | Verify JWT is valid (heartbeat) | No |
+| POST | `/auth/refresh` | Issue new JWT token | No |
+| POST | `/auth/logout` | Clear authentication cookie | No |
+
+*Rate limited: 5 attempts per 15 minutes per IP
+
+**GET /auth/status — response:**
+```json
+{
+  "configured": true
+}
+```
+
+**POST /auth/setup — request:**
+```json
+{
+  "password": "my-vault-password"
+}
+```
+
+**POST /auth/setup — response (on success):**
+```json
+{
+  "message": "Vault configured successfully"
+}
+```
+*Sets `Set-Cookie` header with HttpOnly JWT token*
+
+**POST /auth/login — request:**
+```json
+{
+  "password": "my-vault-password"
+}
+```
+
+**POST /auth/login — response (on success):**
+```json
+{
+  "message": "Login successful"
+}
+```
+*Sets `Set-Cookie` header with HttpOnly JWT token*
+
+**GET /auth/verify — response:**
+```json
+{
+  "valid": true
+}
+```
+
+**POST /auth/refresh — response:**
+```json
+{
+  "message": "Token refreshed"
+}
+```
+*Sets `Set-Cookie` header with new HttpOnly JWT token*
+
+**POST /auth/logout — response:**
+```json
+{
+  "message": "Logged out"
+}
+```
+*Clears authentication cookie*
 
 ### Categories
 
@@ -468,10 +676,22 @@ For validation failures, a map of field-to-message is returned:
 
 ## Security
 
-⚠️ **Important:**
+⚠️ **Critical Security Requirements:**
 
-- Never commit real credentials in `.env`
-- Always use environment variables or secret stores for credentials
-- In production, use a proper secrets management solution (AWS Secrets Manager, HashiCorp Vault, etc.)
-- Keep `.env` out of version control (add to `.gitignore`)
+- **JWT Secret** (`VAULT_JWT_SECRET`): Must be at least 32 random characters. Generate with `openssl rand -base64 32`. Never hardcode or commit this value.
+- **Cookie Security**: In production, always set `VAULT_COOKIE_SECURE=true` to ensure cookies are only sent over HTTPS.
+- **Password Policy**: Minimum 8 characters enforced. Consider prompting users for stronger passwords (12+ chars, mixed case, symbols).
+- **Rate Limiting**: Protect `/setup` and `/login` from brute-force attacks (default: 5 attempts per 15 minutes per IP).
+- **HTTPS Only**: Deploy on HTTPS (Render and Vercel both enforce this). JWT tokens in cookies require HTTPS + Secure flag.
+- **Environment Variables**: Never commit `.env` files. Use your platform's secret management (Render environment variables, Vercel secrets).
+- **CORS Configuration**: Only allow your frontend domain. Adjust `FRONTEND_URL` per deployment environment.
+
+**Deployment checklist:**
+- [ ] `VAULT_JWT_SECRET` is 32+ random characters
+- [ ] `VAULT_COOKIE_SECURE=true` on production
+- [ ] `VAULT_COOKIE_SAME_SITE=None` if frontend is cross-origin
+- [ ] `FRONTEND_URL` matches your frontend deployment domain
+- [ ] HTTPS is enforced (both backend and frontend)
+- [ ] Database backups enabled (Supabase settings)
+- [ ] No console.log() statements exposing sensitive data in frontend code
 
