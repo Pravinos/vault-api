@@ -31,6 +31,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
+        if (HttpMethod.OPTIONS.matches(request.getMethod())) {
+            return true;
+        }
+
         String path = request.getRequestURI();
         boolean isAuthEndpoint = path.equals("/api/v1/auth/login") || path.equals("/api/v1/auth/setup");
         boolean isPost = HttpMethod.POST.matches(request.getMethod());
@@ -41,6 +45,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
+        if (HttpMethod.OPTIONS.matches(request.getMethod())) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String ip = extractClientIp(request);
         Bucket bucket = buckets.computeIfAbsent(ip, k -> newBucket());
 
