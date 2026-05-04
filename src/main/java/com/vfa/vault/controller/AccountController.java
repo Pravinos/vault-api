@@ -1,6 +1,7 @@
 package com.vfa.vault.controller;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
@@ -56,9 +57,9 @@ public class AccountController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deactivateAccount(@PathVariable UUID id) {
-        accountService.deactivateAccount(id);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<Map<String, String>> deleteAccount(@PathVariable UUID id) {
+        accountService.deleteAccount(id);
+        return ResponseEntity.ok(Map.of("message", "Account deleted"));
     }
 
     @PatchMapping("/{id}/manual-balance")

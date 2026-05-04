@@ -56,7 +56,7 @@ public class ExpenseService {
     public ExpenseDTO.Response create(ExpenseDTO.Request request) {
         var category = categoryRepository.findById(request.categoryId())
             .orElseThrow(() -> new ResourceNotFoundException("Category", request.categoryId()));
-        var account = accountRepository.findByIdAndIsActiveTrue(request.accountId())
+        var account = accountRepository.findById(request.accountId())
             .orElseThrow(() -> new ResourceNotFoundException("Account", request.accountId()));
 
         var expense = new Expense();
@@ -75,7 +75,7 @@ public class ExpenseService {
         return expenseRepository.findById(id).map(expense -> {
             var category = categoryRepository.findById(request.categoryId())
                     .orElseThrow(() -> new ResourceNotFoundException("Category", request.categoryId()));
-            var account = accountRepository.findByIdAndIsActiveTrue(request.accountId())
+            var account = accountRepository.findById(request.accountId())
                     .orElseThrow(() -> new ResourceNotFoundException("Account", request.accountId()));
             expense.setAmount(request.amount());
             expense.setNote(request.note());

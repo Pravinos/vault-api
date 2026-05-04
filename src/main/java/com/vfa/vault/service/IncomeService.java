@@ -42,7 +42,7 @@ public class IncomeService {
     public IncomeDTO.Response createIncome(IncomeDTO.Request dto) {
         var category = incomeCategoryRepository.findById(dto.incomeCategoryId())
                 .orElseThrow(() -> new ResourceNotFoundException("IncomeCategory", dto.incomeCategoryId()));
-        var account = accountRepository.findByIdAndIsActiveTrue(dto.accountId())
+        var account = accountRepository.findById(dto.accountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Account", dto.accountId()));
 
         var income = new Income();
@@ -62,7 +62,7 @@ public class IncomeService {
 
         var category = incomeCategoryRepository.findById(dto.incomeCategoryId())
                 .orElseThrow(() -> new ResourceNotFoundException("IncomeCategory", dto.incomeCategoryId()));
-        var account = accountRepository.findByIdAndIsActiveTrue(dto.accountId())
+        var account = accountRepository.findById(dto.accountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Account", dto.accountId()));
 
         income.setAmount(dto.amount());

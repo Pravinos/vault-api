@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,14 +36,14 @@ public class AccountService {
 
     @Transactional(readOnly = true)
     public List<AccountDTO.Response> getAllAccounts() {
-        return accountRepository.findAllActiveOrderByLastUpdatedDesc().stream()
+        return accountRepository.findAllOrderByLastUpdatedDesc().stream()
                 .map(this::buildResponse)
                 .toList();
     }
 
     @Transactional(readOnly = true)
     public AccountDTO.Response getAccountById(UUID id) {
-        Account account = accountRepository.findByIdAndIsActiveTrue(id)
+        Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", id));
         return buildResponse(account);
     }
@@ -78,7 +79,7 @@ public class AccountService {
 
     @Transactional
     public AccountDTO.Response updateAccount(UUID id, AccountDTO.Request dto) {
-        Account account = accountRepository.findByIdAndIsActiveTrue(id)
+        Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", id));
 
         account.setName(dto.name());
@@ -104,19 +105,32 @@ public class AccountService {
     }
 
     @Transactional
-    public void deactivateAccount(UUID id) {
-        // DELETE is idempotent: deleting an already inactive/missing account is a no-op.
-        accountRepository.findById(id).ifPresent(account -> {
-            if (account.isActive()) {
-                account.setActive(false);
-                accountRepository.save(account);
+    public void deleteAccount(UUID id) {
+        // DELETE is idempotent: deleting an already missing account is a no-op.
+        if (!accountRepository.existsById(id)) {
+            return;
+        }
+
+        // Investment detail has a 1:1 FK to account and can be safely cleaned up.
+        investmentDetailRepository.deleteByAccountId(id);
+
+        try {
+            accountRepository.deleteById(id);
+            // Force constraint checks now so any DB error is handled in this method.
+            accountRepository.flush();
+        } catch (DataIntegrityViolationException ex) {
+            // In rare race/commit-timing cases the row can already be gone despite exception.
+            if (!accountRepository.existsById(id)) {
+                return;
             }
-        });
+            throw new IllegalArgumentException(
+                    "Cannot delete account with linked transactions or checkpoints");
+        }
     }
 
     @Transactional
     public AccountDTO.Response updateManualBalance(UUID id, AccountDTO.ManualBalanceRequest dto) {
-        Account account = accountRepository.findByIdAndIsActiveTrue(id)
+        Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", id));
         account.setManualBalance(dto.manualBalance());
         account.setManualBalanceUpdatedAt(LocalDateTime.now());
