@@ -105,10 +105,13 @@ public class AccountService {
 
     @Transactional
     public void deactivateAccount(UUID id) {
-        Account account = accountRepository.findByIdAndIsActiveTrue(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Account", id));
-        account.setActive(false);
-        accountRepository.save(account);
+        // DELETE is idempotent: deleting an already inactive/missing account is a no-op.
+        accountRepository.findById(id).ifPresent(account -> {
+            if (account.isActive()) {
+                account.setActive(false);
+                accountRepository.save(account);
+            }
+        });
     }
 
     @Transactional
