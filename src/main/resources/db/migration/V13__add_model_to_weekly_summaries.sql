@@ -1,0 +1,1 @@
+ALTER TABLE weekly_summaries ADD COLUMN IF NOT EXISTS model VARCHAR(100);

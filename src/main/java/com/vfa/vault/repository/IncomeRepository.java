@@ -1,6 +1,7 @@
 package com.vfa.vault.repository;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -26,4 +27,14 @@ public interface IncomeRepository extends JpaRepository<Income, UUID> {
 
     @Query("SELECT SUM(i.amount) FROM Income i WHERE i.account.id = :accountId")
     BigDecimal sumByAccountId(@Param("accountId") UUID accountId);
+
+        @Query("""
+            SELECT ic.name, SUM(i.amount)
+            FROM Income i JOIN i.incomeCategory ic
+            WHERE i.incomeDate BETWEEN :start AND :end
+            GROUP BY ic.name
+            """)
+        List<Object[]> sumByCategoryBetweenDatesRaw(
+            @Param("start") LocalDate start,
+            @Param("end") LocalDate end);
 }

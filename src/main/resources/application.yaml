@@ -28,6 +28,10 @@ spring:
     baseline-on-migrate: true
     baseline-version: 0
 
+  task:
+    scheduling:
+      enabled: true
+
   ai:
     openai:
       api-key: ${OPENAI_API_KEY:lm-studio}
