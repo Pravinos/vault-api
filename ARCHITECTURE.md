@@ -286,10 +286,11 @@ CREATE TABLE accounts (
     opening_balance           NUMERIC(10,2)  NOT NULL DEFAULT 0,
     manual_balance            NUMERIC(10,2),
     manual_balance_updated_at TIMESTAMP,
-    created_at                TIMESTAMP      NOT NULL DEFAULT NOW(),
-    is_active                 BOOLEAN        NOT NULL DEFAULT TRUE
+  created_at                TIMESTAMP      NOT NULL DEFAULT NOW()
 );
 ```
+
+> `is_active` was removed in V16. Account lifecycle now uses hard-delete with FK protection.
 
 **Balance fields explained:**
 
@@ -297,7 +298,7 @@ CREATE TABLE accounts (
 |---|---|---|
 | `opening_balance` | stored | Seed value entered at account creation. Never changes. |
 | `manual_balance` | stored | User-entered snapshot. Updated on demand. Nullable until first update. |
-| `calculated_balance` | **derived** | `opening_balance + SUM(income) - SUM(expenses)`. Never stored. |
+| `calculated_balance` | **derived** | `opening_balance + SUM(income) - SUM(expenses) + SUM(incoming_transfers) - SUM(outgoing_transfers)`. Never stored. |
 
 ---
 
@@ -338,10 +339,42 @@ CREATE INDEX idx_checkpoints_date    ON investment_checkpoints(recorded_at);
 
 | Field | Formula |
 |---|---|
-| `contributed_amount` | `opening_balance + SUM(income) - SUM(expenses)` |
+| `contributed_amount` | `opening_balance + SUM(income) - SUM(expenses) + SUM(incoming_transfers) - SUM(outgoing_transfers)` |
 | `current_value` | Latest checkpoint `value`, or `contributed_amount` if no checkpoints exist |
 | `return_amount` | `current_value - contributed_amount` |
 | `return_percentage` | `(return_amount / contributed_amount) * 100` |
+
+---
+
+### V17 — `transfers`
+
+```sql
+CREATE TABLE transfers (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_account_id UUID          NOT NULL REFERENCES accounts(id),
+  to_account_id   UUID          NOT NULL REFERENCES accounts(id),
+  amount          NUMERIC(10,2) NOT NULL,
+  note            VARCHAR(255),
+  transfer_date   DATE          NOT NULL DEFAULT CURRENT_DATE,
+  created_at      TIMESTAMP     NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_different_accounts CHECK (from_account_id != to_account_id)
+);
+
+CREATE INDEX idx_transfers_from ON transfers(from_account_id);
+CREATE INDEX idx_transfers_to   ON transfers(to_account_id);
+```
+
+### V18 — transfer reversal guards
+
+```sql
+ALTER TABLE transfers
+  ADD COLUMN original_transfer_id UUID REFERENCES transfers(id),
+  ADD COLUMN is_reversal BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE UNIQUE INDEX ux_transfers_original_transfer_id
+  ON transfers(original_transfer_id)
+  WHERE original_transfer_id IS NOT NULL;
+```
 
 ---
 
@@ -490,14 +523,24 @@ All endpoints below require a valid JWT in the `vault_token` HttpOnly cookie.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/accounts` | List all active accounts |
+| `GET` | `/accounts` | List all accounts |
 | `GET` | `/accounts/{id}` | Get account with all calculated balances |
 | `POST` | `/accounts` | Create account |
 | `PUT` | `/accounts/{id}` | Update account metadata |
-| `DELETE` | `/accounts/{id}` | Soft delete (sets `is_active = false`) |
+| `DELETE` | `/accounts/{id}` | Delete account (blocked by FK-linked transactions/checkpoints) |
 | `PATCH` | `/accounts/{id}/manual-balance` | Update manual balance snapshot |
 | `GET` | `/accounts/{id}/checkpoints` | List all investment checkpoints |
 | `POST` | `/accounts/{id}/checkpoints` | Add a new investment checkpoint |
+| `GET` | `/accounts/{id}/transfers` | List transfers where account is source or destination |
+
+#### Transfers
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/transfers` | Create transfer between two existing accounts |
+| `POST` | `/transfers/{id}/revert` | Create opposite transfer once (one-time reversal guard) |
+
+Transfer account validation is based on account existence. Accounts have no active/inactive flag after V16.
 
 **POST /accounts — request body:**
 ```json

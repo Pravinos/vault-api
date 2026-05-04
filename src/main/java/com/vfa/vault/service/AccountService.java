@@ -17,8 +17,6 @@ import com.vfa.vault.entity.InvestmentCheckpoint;
 import com.vfa.vault.entity.InvestmentDetail;
 import com.vfa.vault.exception.ResourceNotFoundException;
 import com.vfa.vault.repository.AccountRepository;
-import com.vfa.vault.repository.ExpenseRepository;
-import com.vfa.vault.repository.IncomeRepository;
 import com.vfa.vault.repository.InvestmentCheckpointRepository;
 import com.vfa.vault.repository.InvestmentDetailRepository;
 
@@ -31,8 +29,7 @@ public class AccountService {
     private final AccountRepository accountRepository;
     private final InvestmentDetailRepository investmentDetailRepository;
     private final InvestmentCheckpointRepository investmentCheckpointRepository;
-    private final IncomeRepository incomeRepository;
-    private final ExpenseRepository expenseRepository;
+    private final AccountBalanceService accountBalanceService;
 
     @Transactional(readOnly = true)
     public List<AccountDTO.Response> getAllAccounts() {
@@ -56,8 +53,7 @@ public class AccountService {
         account.setOpeningBalance(dto.openingBalance());
 
         // If an opening balance is provided, use it as the initial manual balance too
-        if (dto.openingBalance() != null
-                && dto.openingBalance().compareTo(BigDecimal.ZERO) > 0) {
+        if (dto.openingBalance().compareTo(BigDecimal.ZERO) > 0) {
             account.setManualBalance(dto.openingBalance());
             account.setManualBalanceUpdatedAt(LocalDateTime.now());
         }
@@ -136,11 +132,12 @@ public class AccountService {
         account.setManualBalanceUpdatedAt(LocalDateTime.now());
 
         if (dto.alsoSetAsOpeningBalance()) {
-            BigDecimal totalIncome = incomeRepository.sumByAccountId(id);
-            BigDecimal totalExpenses = expenseRepository.sumByAccountId(id);
+            var breakdown = accountBalanceService.getBreakdown(id);
             boolean hasNoTransactions =
-                    (totalIncome == null || totalIncome.compareTo(BigDecimal.ZERO) == 0)
-                    && (totalExpenses == null || totalExpenses.compareTo(BigDecimal.ZERO) == 0);
+                    breakdown.totalIncome().compareTo(BigDecimal.ZERO) == 0
+                        && breakdown.totalExpenses().compareTo(BigDecimal.ZERO) == 0
+                        && breakdown.incomingTransfers().compareTo(BigDecimal.ZERO) == 0
+                        && breakdown.outgoingTransfers().compareTo(BigDecimal.ZERO) == 0;
             if (hasNoTransactions) {
                 account.setOpeningBalance(dto.manualBalance());
             }
@@ -152,15 +149,10 @@ public class AccountService {
     }
 
     private AccountDTO.Response buildResponse(Account account) {
-        BigDecimal totalIncome = incomeRepository.sumByAccountId(account.getId());
-        if (totalIncome == null) totalIncome = BigDecimal.ZERO;
-
-        BigDecimal totalExpenses = expenseRepository.sumByAccountId(account.getId());
-        if (totalExpenses == null) totalExpenses = BigDecimal.ZERO;
-
-        BigDecimal calculated = account.getOpeningBalance()
-                .add(totalIncome)
-                .subtract(totalExpenses);
+        var breakdown = accountBalanceService.getBreakdown(account.getId());
+        BigDecimal totalIncome = breakdown.totalIncome();
+        BigDecimal totalExpenses = breakdown.totalExpenses();
+        BigDecimal calculated = breakdown.calculatedBalance();
 
         String platform = null;
         String instrument = null;

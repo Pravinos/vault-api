@@ -10,6 +10,7 @@ Vault is a personal finance API protected by a single vault password with JWT-ba
 - **Rate Limiting** – 5 login/setup attempts per 15 minutes per IP
 - **Expense Tracking** – by category, linked to an account
 - **Income Tracking** – by category, linked to an account
+- **Transfers** – account-to-account transfers with one-time reversal support
 - **Account Management** – Checking, Savings, Investment with live balance calculation
 - **Investment Accounts** – optional metadata with checkpoint-based return tracking
 - **Financial Goals** – lifecycle management (create, update, contribute, deactivate)
@@ -118,15 +119,18 @@ src/main/java/com/vfa/vault/
 │   ├── GoalController.java
 │   ├── IncomeCategoryController.java
 │   ├── IncomeController.java
+│   ├── TransferController.java
 │   └── WeeklySummaryController.java
 ├── service/                       # Business logic & orchestration
 │   ├── AccountService.java
+│   ├── AccountBalanceService.java
 │   ├── CategoryService.java
 │   ├── ExpenseService.java
 │   ├── GoalService.java
 │   ├── IncomeCategoryService.java
 │   ├── IncomeService.java
 │   ├── InvestmentCheckpointService.java
+│   ├── TransferService.java
 │   └── WeeklySummaryService.java
 ├── repository/                    # JPA data access
 │   ├── AccountRepository.java
@@ -138,6 +142,7 @@ src/main/java/com/vfa/vault/
 │   ├── InvestmentCheckpointRepository.java
 │   ├── InvestmentDetailRepository.java
 │   ├── LlmProviderConfigRepository.java
+│   ├── TransferRepository.java
 │   └── WeeklySummaryRepository.java
 ├── entity/                        # JPA entity models
 │   ├── Account.java
@@ -150,6 +155,7 @@ src/main/java/com/vfa/vault/
 │   ├── InvestmentCheckpoint.java
 │   ├── InvestmentDetail.java
 │   ├── LlmProviderConfig.java
+│   ├── Transfer.java
 │   └── WeeklySummary.java
 ├── config/                        # Auth, security, and utility beans
 │   ├── SecurityConfig.java        # Spring Security filter chain, CORS
@@ -179,6 +185,8 @@ src/main/java/com/vfa/vault/
 │   ├── IncomeCategoryDTO.java
 │   ├── IncomeDTO.java
 │   ├── InvestmentCheckpointDTO.java
+│   ├── TransferDTO.java
+│   ├── TransferResponseDTO.java
 │   └── WeeklySummaryDTO.java
 ├── entity/                        # JPA entity models
 │   ├── AppConfig.java             # Key-value store for vault configuration (password hash)
@@ -191,6 +199,7 @@ src/main/java/com/vfa/vault/
 │   ├── InvestmentCheckpoint.java
 │   ├── InvestmentDetail.java
 │   ├── LlmProviderConfig.java
+│   ├── Transfer.java
 │   └── WeeklySummary.java
 └── exception/                     # Error handling
     ├── GlobalExceptionHandler.java
@@ -198,7 +207,7 @@ src/main/java/com/vfa/vault/
 
 src/main/resources/
 ├── application.yaml               # Spring Boot configuration
-├── db/migration/                  # Flyway SQL migrations (14 versions)
+├── db/migration/                  # Flyway SQL migrations (18 versions)
 │   ├── V1__create_categories.sql
 │   ├── V2__create_expenses.sql
 │   ├── V3__create_goals.sql
@@ -212,7 +221,11 @@ src/main/resources/
 │   ├── V11__add_account_to_expenses.sql
 │   ├── V12__expand_llm_provider_config.sql
 │   ├── V13__add_model_to_weekly_summaries.sql
-│   └── V14__create_app_config.sql      # Stores vault_password_hash
+│   ├── V14__create_app_config.sql
+│   ├── V15__set_groq_llama_defaults.sql
+│   ├── V16__remove_soft_delete_from_accounts.sql
+│   ├── V17__create_transfers.sql
+│   └── V18__transfer_reversal_guards.sql
 └── templates/                     # Static resources
 ```
 
@@ -369,9 +382,24 @@ Vault uses a **single shared password** to protect all data. There is no user re
 | `manual_balance` | NUMERIC(10,2) | — |
 | `manual_balance_updated_at` | TIMESTAMP | — |
 | `created_at` | TIMESTAMP | NOT NULL, DEFAULT NOW() |
-| `is_active` | BOOLEAN | NOT NULL, DEFAULT TRUE |
 
-*Note: Soft-deleted (never hard-deleted)*
+*Note: `is_active` was removed in V16. Accounts are hard-deleted if no FK references exist.*
+
+### Transfers
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| `id` | UUID | PRIMARY KEY, DEFAULT gen_random_uuid() |
+| `from_account_id` | UUID | NOT NULL, REFERENCES accounts(id) |
+| `to_account_id` | UUID | NOT NULL, REFERENCES accounts(id) |
+| `amount` | NUMERIC(10,2) | NOT NULL |
+| `note` | VARCHAR(255) | — |
+| `transfer_date` | DATE | NOT NULL, DEFAULT CURRENT_DATE |
+| `created_at` | TIMESTAMP | NOT NULL, DEFAULT NOW() |
+| `original_transfer_id` | UUID | NULL, REFERENCES transfers(id) |
+| `is_reversal` | BOOLEAN | NOT NULL, DEFAULT FALSE |
+
+*Indexes: `idx_transfers_from`, `idx_transfers_to`, `ux_transfers_original_transfer_id`*
 
 ### Investment Details
 
@@ -535,14 +563,22 @@ Vault uses a **single shared password** to protect all data. There is no user re
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/accounts` | List all active accounts (includes live balance breakdown) |
+| GET | `/accounts` | List all accounts (includes live balance breakdown) |
 | GET | `/accounts/{id}` | Get account by ID |
 | POST | `/accounts` | Create account |
 | PUT | `/accounts/{id}` | Update account |
-| DELETE | `/accounts/{id}` | Deactivate account (soft delete) |
+| `DELETE` | `/accounts/{id}` | Delete account (fails when referenced by transactions/checkpoints) |
 | PATCH | `/accounts/{id}/manual-balance` | Set manual balance override |
 | GET | `/accounts/{id}/checkpoints` | List investment checkpoints (INVESTMENT type only) |
 | POST | `/accounts/{id}/checkpoints` | Add investment checkpoint (INVESTMENT type only) |
+| `GET` | `/accounts/{id}/transfers` | List account transfer history |
+
+### Transfers
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/transfers` | Create transfer between two existing accounts |
+| `POST` | `/transfers/{id}/revert` | Create opposite transfer (one-time reversal) |
 
 ### Income Categories
 
@@ -591,7 +627,7 @@ Vault uses a **single shared password** to protect all data. There is no user re
 
 Account balances are **never stored** — always calculated at query time:
 
-$$\text{Calculated Balance} = \text{Opening Balance} + \text{Total Income} - \text{Total Expenses}$$
+$$\text{Calculated Balance} = \text{Opening Balance} + \text{Total Income} - \text{Total Expenses} + \text{Incoming Transfers} - \text{Outgoing Transfers}$$
 
 ### Investment Account Fields
 
@@ -605,6 +641,8 @@ For **INVESTMENT** type accounts, the following derived fields are included:
 | `returnPercentage` | $\frac{\text{returnAmount}}{\text{contributedAmount}} \times 100$ |
 
 **Note:** `manualBalance` is an optional override stored separately and does not affect the calculated balance — it is for display purposes only.
+
+**Transfer validation note:** accounts are validated by existence. The `accounts` table has no active/inactive flag after V16.
 
 ## Validation Rules
 

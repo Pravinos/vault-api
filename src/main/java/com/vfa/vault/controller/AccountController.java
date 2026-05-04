@@ -18,8 +18,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.vfa.vault.dto.AccountDTO;
 import com.vfa.vault.dto.InvestmentCheckpointDTO;
+import com.vfa.vault.dto.TransferResponseDTO;
 import com.vfa.vault.service.AccountService;
 import com.vfa.vault.service.InvestmentCheckpointService;
+import com.vfa.vault.service.TransferService;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +33,7 @@ public class AccountController {
 
     private final AccountService accountService;
     private final InvestmentCheckpointService investmentCheckpointService;
+    private final TransferService transferService;
 
     @GetMapping
     public ResponseEntity<List<AccountDTO.Response>> getAllAccounts() {
@@ -73,6 +76,11 @@ public class AccountController {
     public ResponseEntity<List<InvestmentCheckpointDTO.Response>> getCheckpoints(
             @PathVariable UUID id) {
         return ResponseEntity.ok(investmentCheckpointService.getCheckpoints(id));
+    }
+
+    @GetMapping("/{id}/transfers")
+    public ResponseEntity<List<TransferResponseDTO>> getTransfersForAccount(@PathVariable UUID id) {
+        return ResponseEntity.ok(transferService.getTransfersForAccount(id));
     }
 
     @PostMapping("/{id}/checkpoints")
