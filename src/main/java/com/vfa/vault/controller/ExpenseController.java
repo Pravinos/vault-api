@@ -1,6 +1,7 @@
 package com.vfa.vault.controller;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
@@ -52,9 +53,9 @@ public class ExpenseController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable UUID id) {
+    public ResponseEntity<Map<String, String>> delete(@PathVariable UUID id) {
         expenseService.delete(id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(Map.of("message", "Expense deleted"));
     }
 
     @GetMapping("/summary")

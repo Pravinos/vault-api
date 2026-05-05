@@ -1,6 +1,7 @@
 package com.vfa.vault.service;
 
 import java.util.List;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -24,7 +25,7 @@ public class InvestmentCheckpointService {
 
     @Transactional(readOnly = true)
     public List<InvestmentCheckpointDTO.Response> getCheckpoints(UUID accountId) {
-        var account = accountRepository.findByIdAndIsActiveTrue(accountId)
+        var account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", accountId));
         if (account.getAccountType() != AccountType.INVESTMENT) {
             throw new IllegalArgumentException("Account is not an investment account");
@@ -38,7 +39,7 @@ public class InvestmentCheckpointService {
 
     @Transactional
     public InvestmentCheckpointDTO.Response addCheckpoint(UUID accountId, InvestmentCheckpointDTO.Request dto) {
-        var account = accountRepository.findByIdAndIsActiveTrue(accountId)
+        var account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", accountId));
         if (account.getAccountType() != AccountType.INVESTMENT) {
             throw new IllegalArgumentException("Account is not an investment account");
@@ -49,7 +50,14 @@ public class InvestmentCheckpointService {
         checkpoint.setValue(dto.value());
         checkpoint.setNote(dto.note());
 
-        return toResponse(investmentCheckpointRepository.save(checkpoint));
+        checkpoint = investmentCheckpointRepository.save(checkpoint);
+
+        // Keep the account's primary balance aligned with the latest investment checkpoint.
+        account.setManualBalance(checkpoint.getValue());
+        account.setManualBalanceUpdatedAt(LocalDateTime.now());
+        accountRepository.saveAndFlush(account);
+
+        return toResponse(checkpoint);
     }
 
     private InvestmentCheckpointDTO.Response toResponse(InvestmentCheckpoint c) {

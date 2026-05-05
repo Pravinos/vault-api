@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,8 +17,6 @@ import com.vfa.vault.entity.InvestmentCheckpoint;
 import com.vfa.vault.entity.InvestmentDetail;
 import com.vfa.vault.exception.ResourceNotFoundException;
 import com.vfa.vault.repository.AccountRepository;
-import com.vfa.vault.repository.ExpenseRepository;
-import com.vfa.vault.repository.IncomeRepository;
 import com.vfa.vault.repository.InvestmentCheckpointRepository;
 import com.vfa.vault.repository.InvestmentDetailRepository;
 
@@ -30,19 +29,18 @@ public class AccountService {
     private final AccountRepository accountRepository;
     private final InvestmentDetailRepository investmentDetailRepository;
     private final InvestmentCheckpointRepository investmentCheckpointRepository;
-    private final IncomeRepository incomeRepository;
-    private final ExpenseRepository expenseRepository;
+    private final AccountBalanceService accountBalanceService;
 
     @Transactional(readOnly = true)
     public List<AccountDTO.Response> getAllAccounts() {
-        return accountRepository.findAllActiveOrderByLastUpdatedDesc().stream()
+        return accountRepository.findAllOrderByLastUpdatedDesc().stream()
                 .map(this::buildResponse)
                 .toList();
     }
 
     @Transactional(readOnly = true)
     public AccountDTO.Response getAccountById(UUID id) {
-        Account account = accountRepository.findByIdAndIsActiveTrue(id)
+        Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", id));
         return buildResponse(account);
     }
@@ -55,8 +53,7 @@ public class AccountService {
         account.setOpeningBalance(dto.openingBalance());
 
         // If an opening balance is provided, use it as the initial manual balance too
-        if (dto.openingBalance() != null
-                && dto.openingBalance().compareTo(BigDecimal.ZERO) > 0) {
+        if (dto.openingBalance().compareTo(BigDecimal.ZERO) > 0) {
             account.setManualBalance(dto.openingBalance());
             account.setManualBalanceUpdatedAt(LocalDateTime.now());
         }
@@ -78,7 +75,7 @@ public class AccountService {
 
     @Transactional
     public AccountDTO.Response updateAccount(UUID id, AccountDTO.Request dto) {
-        Account account = accountRepository.findByIdAndIsActiveTrue(id)
+        Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", id));
 
         account.setName(dto.name());
@@ -104,26 +101,43 @@ public class AccountService {
     }
 
     @Transactional
-    public void deactivateAccount(UUID id) {
-        Account account = accountRepository.findByIdAndIsActiveTrue(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Account", id));
-        account.setActive(false);
-        accountRepository.save(account);
+    public void deleteAccount(UUID id) {
+        // DELETE is idempotent: deleting an already missing account is a no-op.
+        if (!accountRepository.existsById(id)) {
+            return;
+        }
+
+        // Investment detail has a 1:1 FK to account and can be safely cleaned up.
+        investmentDetailRepository.deleteByAccountId(id);
+
+        try {
+            accountRepository.deleteById(id);
+            // Force constraint checks now so any DB error is handled in this method.
+            accountRepository.flush();
+        } catch (DataIntegrityViolationException ex) {
+            // In rare race/commit-timing cases the row can already be gone despite exception.
+            if (!accountRepository.existsById(id)) {
+                return;
+            }
+            throw new IllegalArgumentException(
+                    "Cannot delete account with linked transactions or checkpoints");
+        }
     }
 
     @Transactional
     public AccountDTO.Response updateManualBalance(UUID id, AccountDTO.ManualBalanceRequest dto) {
-        Account account = accountRepository.findByIdAndIsActiveTrue(id)
+        Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", id));
         account.setManualBalance(dto.manualBalance());
         account.setManualBalanceUpdatedAt(LocalDateTime.now());
 
         if (dto.alsoSetAsOpeningBalance()) {
-            BigDecimal totalIncome = incomeRepository.sumByAccountId(id);
-            BigDecimal totalExpenses = expenseRepository.sumByAccountId(id);
+            var breakdown = accountBalanceService.getBreakdown(id);
             boolean hasNoTransactions =
-                    (totalIncome == null || totalIncome.compareTo(BigDecimal.ZERO) == 0)
-                    && (totalExpenses == null || totalExpenses.compareTo(BigDecimal.ZERO) == 0);
+                    breakdown.totalIncome().compareTo(BigDecimal.ZERO) == 0
+                        && breakdown.totalExpenses().compareTo(BigDecimal.ZERO) == 0
+                        && breakdown.incomingTransfers().compareTo(BigDecimal.ZERO) == 0
+                        && breakdown.outgoingTransfers().compareTo(BigDecimal.ZERO) == 0;
             if (hasNoTransactions) {
                 account.setOpeningBalance(dto.manualBalance());
             }
@@ -135,15 +149,11 @@ public class AccountService {
     }
 
     private AccountDTO.Response buildResponse(Account account) {
-        BigDecimal totalIncome = incomeRepository.sumByAccountId(account.getId());
-        if (totalIncome == null) totalIncome = BigDecimal.ZERO;
-
-        BigDecimal totalExpenses = expenseRepository.sumByAccountId(account.getId());
-        if (totalExpenses == null) totalExpenses = BigDecimal.ZERO;
-
-        BigDecimal calculated = account.getOpeningBalance()
-                .add(totalIncome)
-                .subtract(totalExpenses);
+        var breakdown = accountBalanceService.getBreakdown(account.getId());
+        BigDecimal totalIncome = breakdown.totalIncome();
+        BigDecimal totalExpenses = breakdown.totalExpenses();
+        BigDecimal contributedBalance = breakdown.calculatedBalance();
+        BigDecimal displayCalculatedBalance = contributedBalance;
 
         String platform = null;
         String instrument = null;
@@ -162,11 +172,17 @@ public class AccountService {
                 assetType = detail.getAssetType();
             }
 
-            contributedAmount = calculated;
-            currentValue = investmentCheckpointRepository
-                    .findLatestByAccountId(account.getId())
-                    .map(InvestmentCheckpoint::getValue)
-                    .orElse(contributedAmount);
+            contributedAmount = contributedBalance;
+            currentValue = account.getManualBalance() != null
+                    ? account.getManualBalance()
+                    : investmentCheckpointRepository
+                            .findTopByAccountIdOrderByRecordedAtDesc(account.getId())
+                            .map(InvestmentCheckpoint::getValue)
+                            .orElse(contributedAmount);
+
+            // For investment accounts, the primary displayed balance follows current manual/checkpoint snapshot.
+            displayCalculatedBalance = currentValue;
+
             returnAmount = currentValue.subtract(contributedAmount);
             returnPercentage = contributedAmount.compareTo(BigDecimal.ZERO) != 0
                     ? returnAmount.divide(contributedAmount, 4, RoundingMode.HALF_UP)
@@ -182,7 +198,7 @@ public class AccountService {
                 account.getManualBalance(),
                 account.getManualBalanceUpdatedAt(),
                 account.getCreatedAt(),
-                calculated,
+                displayCalculatedBalance,
                 totalIncome,
                 totalExpenses,
                 platform,

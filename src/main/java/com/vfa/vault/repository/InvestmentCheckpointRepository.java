@@ -5,8 +5,6 @@ import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import com.vfa.vault.entity.InvestmentCheckpoint;
@@ -16,6 +14,10 @@ public interface InvestmentCheckpointRepository extends JpaRepository<Investment
 
     List<InvestmentCheckpoint> findByAccountIdOrderByRecordedAtDesc(UUID accountId);
 
-    @Query("SELECT c FROM InvestmentCheckpoint c WHERE c.account.id = :accountId ORDER BY c.recordedAt DESC LIMIT 1")
-    Optional<InvestmentCheckpoint> findLatestByAccountId(@Param("accountId") UUID accountId);
+    Optional<InvestmentCheckpoint> findTopByAccountIdOrderByRecordedAtDesc(UUID accountId);
+
+    default Optional<java.math.BigDecimal> findLatestValueByAccountId(UUID accountId) {
+        return findTopByAccountIdOrderByRecordedAtDesc(accountId)
+                .map(InvestmentCheckpoint::getValue);
+    }
 }

@@ -3,6 +3,7 @@ package com.vfa.vault.repository;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -90,6 +91,24 @@ public interface ExpenseRepository extends JpaRepository<Expense, UUID> {
 
     @Query("SELECT SUM(e.amount) FROM Expense e WHERE e.account.id = :accountId")
     BigDecimal sumByAccountId(@Param("accountId") UUID accountId);
+
+        @Query("""
+                SELECT COALESCE(SUM(e.amount), 0) FROM Expense e
+                WHERE YEAR(e.expenseDate) = :year AND MONTH(e.expenseDate) = :month
+                """)
+        Optional<BigDecimal> sumByYearMonth(@Param("year") int year, @Param("month") int month);
+
+        @Query(value = """
+                SELECT c.name AS category_name, SUM(e.amount) AS total
+                FROM expenses e
+                JOIN categories c ON c.id = e.category_id
+                WHERE EXTRACT(YEAR FROM e.expense_date) = :year
+                  AND EXTRACT(MONTH FROM e.expense_date) = :month
+                GROUP BY c.id, c.name
+                ORDER BY total DESC
+                LIMIT 1
+                """, nativeQuery = true)
+        Optional<Object[]> findTopCategoryByYearMonth(@Param("year") int year, @Param("month") int month);
 
     @Query("""
             SELECT c.name, SUM(e.amount)
