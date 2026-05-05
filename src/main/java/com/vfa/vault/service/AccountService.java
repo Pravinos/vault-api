@@ -152,7 +152,8 @@ public class AccountService {
         var breakdown = accountBalanceService.getBreakdown(account.getId());
         BigDecimal totalIncome = breakdown.totalIncome();
         BigDecimal totalExpenses = breakdown.totalExpenses();
-        BigDecimal calculated = breakdown.calculatedBalance();
+        BigDecimal contributedBalance = breakdown.calculatedBalance();
+        BigDecimal displayCalculatedBalance = contributedBalance;
 
         String platform = null;
         String instrument = null;
@@ -171,11 +172,17 @@ public class AccountService {
                 assetType = detail.getAssetType();
             }
 
-            contributedAmount = calculated;
-            currentValue = investmentCheckpointRepository
-                    .findLatestByAccountId(account.getId())
-                    .map(InvestmentCheckpoint::getValue)
-                    .orElse(contributedAmount);
+            contributedAmount = contributedBalance;
+            currentValue = account.getManualBalance() != null
+                    ? account.getManualBalance()
+                    : investmentCheckpointRepository
+                            .findTopByAccountIdOrderByRecordedAtDesc(account.getId())
+                            .map(InvestmentCheckpoint::getValue)
+                            .orElse(contributedAmount);
+
+            // For investment accounts, the primary displayed balance follows current manual/checkpoint snapshot.
+            displayCalculatedBalance = currentValue;
+
             returnAmount = currentValue.subtract(contributedAmount);
             returnPercentage = contributedAmount.compareTo(BigDecimal.ZERO) != 0
                     ? returnAmount.divide(contributedAmount, 4, RoundingMode.HALF_UP)
@@ -191,7 +198,7 @@ public class AccountService {
                 account.getManualBalance(),
                 account.getManualBalanceUpdatedAt(),
                 account.getCreatedAt(),
-                calculated,
+                displayCalculatedBalance,
                 totalIncome,
                 totalExpenses,
                 platform,

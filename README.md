@@ -12,6 +12,7 @@ Vault is a personal finance API protected by a single vault password with JWT-ba
 - **Income Tracking** – by category, linked to an account
 - **Transfers** – account-to-account transfers with one-time reversal support
 - **Account Management** – Checking, Savings, Investment with live balance calculation
+- **Unified Dashboard API** – `GET /api/v1/dashboard` returns pre-calculated dashboard metrics
 - **Investment Accounts** – optional metadata with checkpoint-based return tracking
 - **Financial Goals** – lifecycle management (create, update, contribute, deactivate)
 - **Summaries & Stats** – monthly and weekly summaries with aggregate analytics
@@ -120,6 +121,7 @@ src/main/java/com/vfa/vault/
 │   ├── IncomeCategoryController.java
 │   ├── IncomeController.java
 │   ├── TransferController.java
+│   ├── DashboardController.java
 │   └── WeeklySummaryController.java
 ├── service/                       # Business logic & orchestration
 │   ├── AccountService.java
@@ -130,6 +132,7 @@ src/main/java/com/vfa/vault/
 │   ├── IncomeCategoryService.java
 │   ├── IncomeService.java
 │   ├── InvestmentCheckpointService.java
+│   ├── DashboardService.java
 │   ├── TransferService.java
 │   └── WeeklySummaryService.java
 ├── repository/                    # JPA data access
@@ -185,6 +188,8 @@ src/main/java/com/vfa/vault/
 │   ├── IncomeCategoryDTO.java
 │   ├── IncomeDTO.java
 │   ├── InvestmentCheckpointDTO.java
+│   ├── AccountDashboardDTO.java
+│   ├── DashboardResponseDTO.java
 │   ├── TransferDTO.java
 │   ├── TransferResponseDTO.java
 │   └── WeeklySummaryDTO.java
@@ -573,6 +578,12 @@ Vault uses a **single shared password** to protect all data. There is no user re
 | POST | `/accounts/{id}/checkpoints` | Add investment checkpoint (INVESTMENT type only) |
 | `GET` | `/accounts/{id}/transfers` | List account transfer history |
 
+### Dashboard
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/dashboard` | Single-source dashboard payload with net worth, account balances, month stats, and MoM deltas |
+
 ### Transfers
 
 | Method | Endpoint | Description |
@@ -603,6 +614,7 @@ Vault uses a **single shared password** to protect all data. There is no user re
 | GET | `/summaries` | List weekly summaries (newest first) |
 | GET | `/summaries/latest` | Get most recent weekly summary |
 | GET | `/summaries/{id}` | Get weekly summary by id |
+| DELETE | `/summaries/{id}` | Delete weekly summary (idempotent hard delete) |
 
 ### AI
 
@@ -622,6 +634,7 @@ Vault uses a **single shared password** to protect all data. There is no user re
 - Chat requests support optional `conversationId` for memory continuity.
 - Weekly summary generation logs each step and returns readable error payloads on failure.
 - Model discovery responses are cached in `llm_provider_config`.
+- `FinanceTools.getDashboardSummary()` uses `DashboardService.getDashboard()` so AI and dashboard use identical calculations.
 
 ## Balance Calculation
 
@@ -636,11 +649,19 @@ For **INVESTMENT** type accounts, the following derived fields are included:
 | Field | Calculation |
 |-------|-------------|
 | `contributedAmount` | Same as calculated balance |
-| `currentValue` | Latest checkpoint value, or `contributedAmount` if no checkpoint exists |
+| `currentValue` | Manual snapshot if present (checkpoint-aligned), otherwise latest checkpoint value, otherwise `contributedAmount` |
 | `returnAmount` | `currentValue - contributedAmount` |
 | `returnPercentage` | $\frac{\text{returnAmount}}{\text{contributedAmount}} \times 100$ |
 
-**Note:** `manualBalance` is an optional override stored separately and does not affect the calculated balance — it is for display purposes only.
+**Note:** For investment accounts, the primary displayed account balance follows the latest manual/checkpoint snapshot (`currentValue`). Transfers touching investment accounts also adjust this snapshot so the main balance reflects incoming/outgoing moves immediately.
+
+## Dashboard Aggregation
+
+Dashboard metrics are computed server-side in `DashboardService` and exposed via `GET /api/v1/dashboard`.
+
+- Net worth, monthly totals, top category, and MoM percentages are pre-calculated in one backend response.
+- Account cards are pre-computed (including investment return fields and display labels).
+- The AI tool `getDashboardSummary()` reuses the same service output to prevent calculation drift.
 
 **Transfer validation note:** accounts are validated by existence. The `accounts` table has no active/inactive flag after V16.
 

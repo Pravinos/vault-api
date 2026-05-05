@@ -88,9 +88,11 @@ public class ExpenseService {
 
     @Transactional
     public void delete(UUID id) {
-        if (!expenseRepository.existsById(id))
-            throw new ResourceNotFoundException("Expense", id);
-        expenseRepository.deleteById(id);
+        // Hard delete only. Idempotent by design: deleting a missing row is a no-op.
+        expenseRepository.findById(id).ifPresent(expense -> {
+            expenseRepository.delete(expense);
+            expenseRepository.flush();
+        });
     }
 
     @Transactional(readOnly = true)

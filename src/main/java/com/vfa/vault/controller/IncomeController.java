@@ -52,9 +52,9 @@ public class IncomeController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteIncome(@PathVariable UUID id) {
+    public ResponseEntity<Map<String, String>> deleteIncome(@PathVariable UUID id) {
         incomeService.deleteIncome(id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(Map.of("message", "Income deleted"));
     }
 
     @GetMapping("/summary")

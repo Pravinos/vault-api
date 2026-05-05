@@ -15,8 +15,11 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
     @Query("""
         SELECT a FROM Account a
         ORDER BY
-            GREATEST(a.createdAt,
-                     COALESCE(a.manualBalanceUpdatedAt, a.createdAt)) DESC
+            CASE
+                WHEN a.manualBalanceUpdatedAt IS NOT NULL THEN a.manualBalanceUpdatedAt
+                ELSE a.createdAt
+            END DESC,
+            a.createdAt DESC
         """)
     List<Account> findAllOrderByLastUpdatedDesc();
 }

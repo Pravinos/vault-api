@@ -1,9 +1,11 @@
 package com.vfa.vault.controller;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -43,5 +45,11 @@ public class WeeklySummaryController {
     @GetMapping("/{id}")
     public ResponseEntity<WeeklySummaryResponseDTO> findById(@PathVariable UUID id) {
         return ResponseEntity.ok(weeklySummaryService.findById(id));
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Map<String, String>> deleteById(@PathVariable UUID id) {
+        weeklySummaryService.deleteById(id);
+        return ResponseEntity.ok(Map.of("message", "Weekly summary deleted"));
     }
 }

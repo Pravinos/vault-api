@@ -1,6 +1,7 @@
 package com.vfa.vault.service;
 
 import java.util.List;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -53,8 +54,8 @@ public class InvestmentCheckpointService {
 
         // Keep the account's primary balance aligned with the latest investment checkpoint.
         account.setManualBalance(checkpoint.getValue());
-        account.setManualBalanceUpdatedAt(checkpoint.getRecordedAt());
-        accountRepository.save(account);
+        account.setManualBalanceUpdatedAt(LocalDateTime.now());
+        accountRepository.saveAndFlush(account);
 
         return toResponse(checkpoint);
     }

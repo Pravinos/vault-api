@@ -76,9 +76,11 @@ public class IncomeService {
 
     @Transactional
     public void deleteIncome(UUID id) {
-        if (!incomeRepository.existsById(id))
-            throw new ResourceNotFoundException("Income", id);
-        incomeRepository.deleteById(id);
+                // Hard delete only. Idempotent by design: deleting a missing row is a no-op.
+                incomeRepository.findById(id).ifPresent(income -> {
+                        incomeRepository.delete(income);
+                        incomeRepository.flush();
+                });
     }
 
     @Transactional(readOnly = true)

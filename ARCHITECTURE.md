@@ -533,6 +533,12 @@ All endpoints below require a valid JWT in the `vault_token` HttpOnly cookie.
 | `POST` | `/accounts/{id}/checkpoints` | Add a new investment checkpoint |
 | `GET` | `/accounts/{id}/transfers` | List transfers where account is source or destination |
 
+#### Dashboard
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/dashboard` | Single-source dashboard payload (net worth, accounts, income/expense, cash flow, category stats, MoM deltas) |
+
 #### Transfers
 
 | Method | Endpoint | Description |
@@ -912,6 +918,11 @@ makes available to the LLM during a conversation.
 @Component
 public class FinanceTools {
 
+  @Tool(description = "Get the current dashboard summary including net worth, monthly income, expenses, and account balances")
+  public DashboardResponseDTO getDashboardSummary() {
+    return dashboardService.getDashboard();
+  }
+
     @Tool(description = "Get total expenses by category for a given month. " +
                         "Month format: YYYY-MM")
     public Map<String, Double> getExpensesByCategory(String month) {
@@ -921,7 +932,7 @@ public class FinanceTools {
     @Tool(description = "Get the current month's total spending and " +
                         "how it compares to the previous month")
     public BudgetStatus getBudgetStatus() {
-        return expenseService.getCurrentMonthStatus();
+      return fromDashboard(dashboardService.getDashboard());
     }
 
     @Tool(description = "Get progress for all active goals: name, " +
@@ -945,7 +956,7 @@ public class FinanceTools {
     @Tool(description = "Get all accounts with their calculated and manual balances. " +
                         "For investment accounts, includes return amount and percentage.")
     public List<AccountSummary> getAccountSummaries() {
-        return accountService.getAllAccountSummaries();
+      return mapFromDashboard(dashboardService.getDashboard());
     }
 
     @Tool(description = "Get total income by category for a given month. " +
@@ -956,10 +967,12 @@ public class FinanceTools {
 
     @Tool(description = "Get net cash flow (income minus expenses) for a given month.")
     public Double getNetCashFlow(String month) {
-        return incomeService.getNetCashFlow(month);
+      return forMonthOrDashboard(month, dashboardService.getDashboard());
     }
 }
 ```
+
+  Dashboard and AI parity rule: both dashboard UI data and AI dashboard summary come from `DashboardService.getDashboard()` to avoid drift in net worth and monthly calculations.
 
 ---
 
@@ -1020,7 +1033,7 @@ public void generateWeeklySummary() {
 
 **Status:** Implemented
 
-Spring Boot 4.x backend with PostgreSQL and Flyway managing 14 migrations. Entities for expenses, categories, goals, accounts, income, and summaries. Full service layer with business logic and REST controllers.
+Spring Boot 4.x backend with PostgreSQL and Flyway managing 18 migrations. Entities for expenses, categories, goals, accounts, income, transfers, and summaries. Full service layer with business logic and REST controllers.
 
 ---
 
@@ -1070,9 +1083,11 @@ Multi-account support (Checking, Savings, Investment) with derived balance calcu
 **Features:**
 - Spring AI integration with dual OpenAiChatModel beans (LM Studio + Groq)
 - `FinanceTools` with `@Tool` methods for financial data queries:
+  - getDashboardSummary (single-source dashboard payload)
   - getExpensesByCategory, getBudgetStatus, getGoalProgress
   - getDailySpending, getCategoryTrend, getAccountSummaries
   - getIncomeByCategory, getNetCashFlow
+- Dashboard/AI parity: Finance tools use `DashboardService` for dashboard-derived numbers.
 - `LlmProviderRouter` with TaskType enum (CHAT, SUMMARY) and per-task model routing
 - Model discovery endpoints: `GET /ai/models/lmstudio`, `GET /ai/models/groq`
 - Config endpoints: `GET /ai/config`, `PATCH /ai/config` for user-controlled provider/model selection
@@ -1127,6 +1142,7 @@ vault/
 │   │   ├── controller/
 │   │   │   ├── AccountController.java
 │   │   │   ├── CategoryController.java
+│   │   │   ├── DashboardController.java
 │   │   │   ├── ExpenseController.java
 │   │   │   ├── GoalController.java
 │   │   │   ├── IncomeCategoryController.java
@@ -1134,6 +1150,7 @@ vault/
 │   │   │   └── WeeklySummaryController.java
 │   │   ├── service/
 │   │   │   ├── AccountService.java
+│   │   │   ├── DashboardService.java
 │   │   │   ├── CategoryService.java
 │   │   │   ├── ExpenseService.java
 │   │   │   ├── GoalService.java
@@ -1163,6 +1180,7 @@ vault/
 │   │   │   └── WeeklySummary.java
 │   │   ├── dto/
 │   │   │   ├── AccountDTO.java
+│   │   │   ├── AccountDashboardDTO.java
 │   │   │   ├── AccountResponseDTO.java
 │   │   │   ├── CategoryDTO.java
 │   │   │   ├── ExpenseDTO.java
@@ -1172,6 +1190,7 @@ vault/
 │   │   │   ├── IncomeResponseDTO.java
 │   │   │   ├── InvestmentCheckpointDTO.java
 │   │   │   ├── InvestmentCheckpointResponseDTO.java
+│   │   │   ├── DashboardResponseDTO.java
 │   │   │   └── ManualBalanceDTO.java
 │   │   ├── exception/
 │   │   │   ├── GlobalExceptionHandler.java

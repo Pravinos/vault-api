@@ -2,6 +2,7 @@ package com.vfa.vault.service;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -13,9 +14,12 @@ import org.springframework.transaction.annotation.Transactional;
 import com.vfa.vault.dto.TransferDTO;
 import com.vfa.vault.dto.TransferResponseDTO;
 import com.vfa.vault.entity.Account;
+import com.vfa.vault.entity.AccountType;
+import com.vfa.vault.entity.InvestmentCheckpoint;
 import com.vfa.vault.entity.Transfer;
 import com.vfa.vault.exception.ResourceNotFoundException;
 import com.vfa.vault.repository.AccountRepository;
+import com.vfa.vault.repository.InvestmentCheckpointRepository;
 import com.vfa.vault.repository.TransferRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -29,6 +33,7 @@ public class TransferService {
     private final TransferRepository transferRepository;
     private final AccountRepository accountRepository;
     private final AccountBalanceService accountBalanceService;
+    private final InvestmentCheckpointRepository investmentCheckpointRepository;
 
     @Transactional
     public TransferResponseDTO createTransfer(TransferDTO dto) {
@@ -55,7 +60,10 @@ public class TransferService {
         transfer.setNote(dto.note());
         transfer.setTransferDate(dto.transferDate() != null ? dto.transferDate() : LocalDate.now());
 
-        return toResponse(transferRepository.save(transfer));
+        Transfer saved = transferRepository.save(transfer);
+        applyInvestmentSnapshotDelta(saved.getFromAccount(), saved.getAmount().negate());
+        applyInvestmentSnapshotDelta(saved.getToAccount(), saved.getAmount());
+        return toResponse(saved);
     }
 
     @Transactional(readOnly = true)
@@ -111,7 +119,29 @@ public class TransferService {
         }
         reversal.setNote(reversalNote);
 
-        return toResponse(transferRepository.save(reversal));
+        Transfer saved = transferRepository.save(reversal);
+        applyInvestmentSnapshotDelta(saved.getFromAccount(), saved.getAmount().negate());
+        applyInvestmentSnapshotDelta(saved.getToAccount(), saved.getAmount());
+        return toResponse(saved);
+    }
+
+    private void applyInvestmentSnapshotDelta(Account account, BigDecimal delta) {
+        if (account.getAccountType() != AccountType.INVESTMENT) {
+            return;
+        }
+
+        BigDecimal base = account.getManualBalance();
+        if (base == null) {
+            base = investmentCheckpointRepository
+                    .findTopByAccountIdOrderByRecordedAtDesc(account.getId())
+                    .map(InvestmentCheckpoint::getValue)
+                    .orElse(account.getOpeningBalance() != null ? account.getOpeningBalance() : BigDecimal.ZERO);
+        }
+
+        BigDecimal updated = base.add(delta);
+        account.setManualBalance(updated);
+        account.setManualBalanceUpdatedAt(LocalDateTime.now());
+        accountRepository.save(account);
     }
 
     private TransferResponseDTO toResponse(Transfer transfer) {
