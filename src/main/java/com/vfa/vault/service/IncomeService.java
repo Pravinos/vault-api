@@ -42,7 +42,7 @@ public class IncomeService {
     public IncomeDTO.Response createIncome(IncomeDTO.Request dto) {
         var category = incomeCategoryRepository.findById(dto.incomeCategoryId())
                 .orElseThrow(() -> new ResourceNotFoundException("IncomeCategory", dto.incomeCategoryId()));
-        var account = accountRepository.findByIdAndIsActiveTrue(dto.accountId())
+        var account = accountRepository.findById(dto.accountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Account", dto.accountId()));
 
         var income = new Income();
@@ -62,7 +62,7 @@ public class IncomeService {
 
         var category = incomeCategoryRepository.findById(dto.incomeCategoryId())
                 .orElseThrow(() -> new ResourceNotFoundException("IncomeCategory", dto.incomeCategoryId()));
-        var account = accountRepository.findByIdAndIsActiveTrue(dto.accountId())
+        var account = accountRepository.findById(dto.accountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Account", dto.accountId()));
 
         income.setAmount(dto.amount());
@@ -76,9 +76,11 @@ public class IncomeService {
 
     @Transactional
     public void deleteIncome(UUID id) {
-        if (!incomeRepository.existsById(id))
-            throw new ResourceNotFoundException("Income", id);
-        incomeRepository.deleteById(id);
+                // Hard delete only. Idempotent by design: deleting a missing row is a no-op.
+                incomeRepository.findById(id).ifPresent(income -> {
+                        incomeRepository.delete(income);
+                        incomeRepository.flush();
+                });
     }
 
     @Transactional(readOnly = true)

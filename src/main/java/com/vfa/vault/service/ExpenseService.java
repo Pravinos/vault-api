@@ -56,7 +56,7 @@ public class ExpenseService {
     public ExpenseDTO.Response create(ExpenseDTO.Request request) {
         var category = categoryRepository.findById(request.categoryId())
             .orElseThrow(() -> new ResourceNotFoundException("Category", request.categoryId()));
-        var account = accountRepository.findByIdAndIsActiveTrue(request.accountId())
+        var account = accountRepository.findById(request.accountId())
             .orElseThrow(() -> new ResourceNotFoundException("Account", request.accountId()));
 
         var expense = new Expense();
@@ -75,7 +75,7 @@ public class ExpenseService {
         return expenseRepository.findById(id).map(expense -> {
             var category = categoryRepository.findById(request.categoryId())
                     .orElseThrow(() -> new ResourceNotFoundException("Category", request.categoryId()));
-            var account = accountRepository.findByIdAndIsActiveTrue(request.accountId())
+            var account = accountRepository.findById(request.accountId())
                     .orElseThrow(() -> new ResourceNotFoundException("Account", request.accountId()));
             expense.setAmount(request.amount());
             expense.setNote(request.note());
@@ -88,9 +88,11 @@ public class ExpenseService {
 
     @Transactional
     public void delete(UUID id) {
-        if (!expenseRepository.existsById(id))
-            throw new ResourceNotFoundException("Expense", id);
-        expenseRepository.deleteById(id);
+        // Hard delete only. Idempotent by design: deleting a missing row is a no-op.
+        expenseRepository.findById(id).ifPresent(expense -> {
+            expenseRepository.delete(expense);
+            expenseRepository.flush();
+        });
     }
 
     @Transactional(readOnly = true)

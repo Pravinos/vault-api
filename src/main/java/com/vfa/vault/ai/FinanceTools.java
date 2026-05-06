@@ -4,6 +4,8 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -11,10 +13,11 @@ import java.util.stream.Collectors;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
+import com.vfa.vault.dto.DashboardResponseDTO;
 import com.vfa.vault.entity.Income;
 import com.vfa.vault.repository.ExpenseRepository;
 import com.vfa.vault.repository.IncomeRepository;
-import com.vfa.vault.service.AccountService;
+import com.vfa.vault.service.DashboardService;
 import com.vfa.vault.service.GoalService;
 
 import lombok.RequiredArgsConstructor;
@@ -25,7 +28,7 @@ public class FinanceTools {
 
     private final ExpenseRepository expenseRepository;
     private final IncomeRepository incomeRepository;
-    private final AccountService accountService;
+        private final DashboardService dashboardService;
     private final GoalService goalService;
 
     private static final DateTimeFormatter MONTH_FMT = DateTimeFormatter.ofPattern("yyyy-MM");
@@ -62,6 +65,11 @@ public class FinanceTools {
             String instrument
     ) {}
 
+        @Tool(description = "Get the current dashboard summary including net worth, monthly income, expenses, and account balances")
+        public DashboardResponseDTO getDashboardSummary() {
+                return dashboardService.getDashboard();
+        }
+
     @Tool(description = "Get total expenses grouped by category for a given month. Month format: YYYY-MM")
     public Map<String, Double> getExpensesByCategory(String month) {
         return expenseRepository.sumByCategoryForMonth(month).stream()
@@ -73,15 +81,18 @@ public class FinanceTools {
 
     @Tool(description = "Get the current month's total spending and how it compares to the previous month")
     public BudgetStatus getBudgetStatus() {
+        DashboardResponseDTO dashboard = dashboardService.getDashboard();
         YearMonth now = YearMonth.now();
         YearMonth prev = now.minusMonths(1);
         String thisMonth = now.format(MONTH_FMT);
         String lastMonth = prev.format(MONTH_FMT);
 
-        BigDecimal thisTotal = expenseRepository.totalForMonth(thisMonth);
-        if (thisTotal == null) thisTotal = BigDecimal.ZERO;
-        BigDecimal lastTotal = expenseRepository.totalForMonth(lastMonth);
-        if (lastTotal == null) lastTotal = BigDecimal.ZERO;
+        BigDecimal thisTotal = dashboard.getExpensesThisMonth() != null
+                ? dashboard.getExpensesThisMonth()
+                : BigDecimal.ZERO;
+        BigDecimal lastTotal = dashboard.getExpensesLastMonth() != null
+                ? dashboard.getExpensesLastMonth()
+                : BigDecimal.ZERO;
 
         double change = thisTotal.subtract(lastTotal).doubleValue();
         double changePct = lastTotal.compareTo(BigDecimal.ZERO) != 0
@@ -126,18 +137,22 @@ public class FinanceTools {
 
     @Tool(description = "Get all accounts with their calculated and manual balances. For investment accounts, includes return amount and percentage.")
     public List<AccountSummary> getAccountSummaries() {
-        return accountService.getAllAccounts().stream()
+        DashboardResponseDTO dashboard = dashboardService.getDashboard();
+        List<com.vfa.vault.dto.AccountDashboardDTO> accounts =
+                dashboard.getAccounts() != null ? dashboard.getAccounts() : Collections.emptyList();
+
+        return accounts.stream()
                 .map(a -> new AccountSummary(
-                        a.name(),
-                        a.accountType().name(),
-                        a.calculatedBalance().doubleValue(),
-                        a.manualBalance() != null ? a.manualBalance().doubleValue() : null,
-                        a.contributedAmount() != null ? a.contributedAmount().doubleValue() : null,
-                        a.currentValue() != null ? a.currentValue().doubleValue() : null,
-                        a.returnAmount() != null ? a.returnAmount().doubleValue() : null,
-                        a.returnPercentage() != null ? a.returnPercentage().doubleValue() : null,
-                        a.platform(),
-                        a.instrument()))
+                        a.getName(),
+                        a.getAccountType(),
+                        valueOrZero(a.getCalculatedBalance()),
+                        toDoubleOrNull(a.getManualBalance()),
+                        "INVESTMENT".equals(a.getAccountType()) ? valueOrZero(a.getCalculatedBalance()) : null,
+                        toDoubleOrNull(a.getCurrentValue()),
+                        toDoubleOrNull(a.getReturnAmount()),
+                        toDoubleOrNull(a.getReturnPercentage()),
+                        null,
+                        null))
                 .toList();
     }
 
@@ -153,7 +168,11 @@ public class FinanceTools {
 
     @Tool(description = "Get net cash flow (income minus expenses) for a given month. Month format: YYYY-MM")
     public Double getNetCashFlow(String month) {
-        if (month == null) month = YearMonth.now().format(MONTH_FMT);
+        if (month == null || isCurrentMonth(month)) {
+            DashboardResponseDTO dashboard = dashboardService.getDashboard();
+            return valueOrZero(dashboard.getNetCashFlow());
+        }
+
         BigDecimal totalIncome = incomeRepository.findByFilters(month, null).stream()
                 .map(Income::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -161,4 +180,20 @@ public class FinanceTools {
         if (totalExpenses == null) totalExpenses = BigDecimal.ZERO;
         return totalIncome.subtract(totalExpenses).doubleValue();
     }
+
+        private boolean isCurrentMonth(String month) {
+                try {
+                        return YearMonth.parse(month, MONTH_FMT).equals(YearMonth.now());
+                } catch (DateTimeParseException ex) {
+                        return false;
+                }
+        }
+
+        private Double toDoubleOrNull(BigDecimal value) {
+                return value != null ? value.doubleValue() : null;
+        }
+
+        private double valueOrZero(BigDecimal value) {
+                return value != null ? value.doubleValue() : 0.0;
+        }
 }

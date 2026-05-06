@@ -86,6 +86,15 @@ public class WeeklySummaryService {
         }
     }
 
+        @Transactional
+        public void deleteById(UUID id) {
+                // Hard delete only. Idempotent by design: deleting a missing row is a no-op.
+                weeklySummaryRepository.findById(id).ifPresent(summary -> {
+                        weeklySummaryRepository.delete(summary);
+                        weeklySummaryRepository.flush();
+                });
+        }
+
     private Optional<WeeklySummary> generateAndSave() {
         LlmProviderConfig config = configRepo.findById(1)
                 .orElseThrow(() -> new IllegalStateException("llm_provider_config row not found"));

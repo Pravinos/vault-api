@@ -3,6 +3,7 @@ package com.vfa.vault.repository;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -27,6 +28,12 @@ public interface IncomeRepository extends JpaRepository<Income, UUID> {
 
     @Query("SELECT SUM(i.amount) FROM Income i WHERE i.account.id = :accountId")
     BigDecimal sumByAccountId(@Param("accountId") UUID accountId);
+
+    @Query("""
+        SELECT COALESCE(SUM(i.amount), 0) FROM Income i
+        WHERE YEAR(i.incomeDate) = :year AND MONTH(i.incomeDate) = :month
+        """)
+    Optional<BigDecimal> sumByYearMonth(@Param("year") int year, @Param("month") int month);
 
         @Query("""
             SELECT ic.name, SUM(i.amount)

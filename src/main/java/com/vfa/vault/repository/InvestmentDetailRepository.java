@@ -12,4 +12,6 @@ import com.vfa.vault.entity.InvestmentDetail;
 public interface InvestmentDetailRepository extends JpaRepository<InvestmentDetail, UUID> {
 
     Optional<InvestmentDetail> findByAccountId(UUID accountId);
+
+    void deleteByAccountId(UUID accountId);
 }
