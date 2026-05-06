@@ -131,7 +131,7 @@ public class AccountService {
         account.setManualBalance(dto.manualBalance());
         account.setManualBalanceUpdatedAt(LocalDateTime.now());
 
-        if (dto.alsoSetAsOpeningBalance()) {
+        if (Boolean.TRUE.equals(dto.alsoSetAsOpeningBalance())) {
             var breakdown = accountBalanceService.getBreakdown(id);
             boolean hasNoTransactions =
                     breakdown.totalIncome().compareTo(BigDecimal.ZERO) == 0

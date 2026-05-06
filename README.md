@@ -8,18 +8,19 @@ Vault is a personal finance API protected by a single vault password with JWT-ba
 
 - **Password Gate** – single vault password, no user registration, HTTP-only cookie-based JWT auth
 - **Rate Limiting** – 5 login/setup attempts per 15 minutes per IP
+- **Multi-Account Support** – Checking, Savings, Investment accounts with live balance calculation
 - **Expense Tracking** – by category, linked to an account
 - **Income Tracking** – by category, linked to an account
 - **Transfers** – account-to-account transfers with one-time reversal support
-- **Account Management** – Checking, Savings, Investment with live balance calculation
-- **Unified Dashboard API** – `GET /api/v1/dashboard` returns pre-calculated dashboard metrics
 - **Investment Accounts** – optional metadata with checkpoint-based return tracking
 - **Financial Goals** – lifecycle management (create, update, contribute, deactivate)
-- **Summaries & Stats** – monthly and weekly summaries with aggregate analytics
-- **AI Assistant** – chat over real finance data with tool-calling
-- **LLM Routing** – per-task provider/model selection for chat and summaries
+- **Unified Dashboard API** – `GET /api/v1/dashboard` returns pre-calculated dashboard metrics
+- **Summaries & Analytics** – monthly and weekly summaries with aggregate analytics
+- **AI Assistant** – chat over real finance data with tool-calling capabilities
+- **LLM Routing** – per-task provider/model selection (Groq, OpenAI, LM Studio)
 - **Model Discovery** – live LM Studio and Groq model list endpoints
 - **Manual AI Summary Generation** – trigger summary generation from API
+- **Spring Profiles** – dev (H2) and prod (PostgreSQL) configurations for easy local development
 
 ## Tech Stack
 
@@ -69,7 +70,13 @@ OPENAI_API_KEY=lm-studio
 Using Maven Wrapper (PowerShell):
 
 ```powershell
-# Start development server
+# Start with dev profile (H2 in-memory database, auto-loads dev data)
+$env:SPRING_PROFILES_ACTIVE="dev"
+.\mvnw.cmd spring-boot:run
+
+# Start with prod profile (PostgreSQL, Flyway migrations, requires DB_PASSWORD)
+$env:DB_PASSWORD="your_postgres_password"
+$env:SPRING_PROFILES_ACTIVE="prod"
 .\mvnw.cmd spring-boot:run
 
 # Compile only
@@ -78,6 +85,27 @@ Using Maven Wrapper (PowerShell):
 # Run tests
 .\mvnw.cmd test
 ```
+
+### Spring Profiles
+
+The application supports two profiles for different environments:
+
+#### **dev** Profile (Local Development)
+- **Database**: H2 in-memory (no PostgreSQL required)
+- **Migrations**: Flyway disabled
+- **Data**: Auto-loads `dev-data.sql` on startup
+- **JPA**: `ddl-auto: drop-and-create` (recreates schema each startup)
+- **Auth**: `jwt-secret: dev-secret-for-local-testing-only`
+- **Cookie**: Secure=false, SameSite=Lax (works over HTTP)
+- **Logging**: DEBUG level for `com.vfa.vault`
+
+#### **prod** Profile (Production & Staging)
+- **Database**: PostgreSQL with connection pooling
+- **Migrations**: Flyway enabled with validation
+- **JPA**: `ddl-auto: validate` (no schema auto-creation)
+- **Auth**: Requires `VAULT_JWT_SECRET` environment variable (min 32 chars)
+- **Cookie**: Secure=true, SameSite=None (HTTPS only, cross-origin ready)
+- **Logging**: INFO level
 
 ### Default Server
 
@@ -95,10 +123,10 @@ On first run, the vault is unconfigured. Use the frontend to:
 
 ### Configuration
 
-- **Runtime config** → [src/main/resources/application.yaml](src/main/resources/application.yaml)
-- **Database** → PostgreSQL (configured in YAML)
-- **.env import** → Loaded via Spring's `spring.config.import`
-- **Flyway migrations** → Auto-run at startup with validation
+- **Spring Profiles** → `application.yaml`, `application-dev.yaml`, `application-prod.yaml`
+- **Environment Variables** → `SPRING_PROFILES_ACTIVE`, `DB_PASSWORD`, `VAULT_JWT_SECRET`, `FRONTEND_URL`
+- **.env import** → Loaded via Spring's `spring.config.import` (optional in prod if using env vars)
+- **Flyway migrations** → Auto-run on startup in prod profile with validation
 - **Auth config** → `vault.auth.*` in YAML (JWT secret, cookie settings, CORS frontend URL)
 
 ## Project Structure

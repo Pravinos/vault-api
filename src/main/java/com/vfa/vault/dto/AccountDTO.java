@@ -52,6 +52,6 @@ public class AccountDTO {
             @NotNull(message = "Manual balance is required")
             @DecimalMin(value = "0.00", message = "Manual balance must be >= 0")
             BigDecimal manualBalance,
-            boolean alsoSetAsOpeningBalance
+            Boolean alsoSetAsOpeningBalance
     ) {}
 }

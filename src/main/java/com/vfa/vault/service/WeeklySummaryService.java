@@ -131,7 +131,7 @@ public class WeeklySummaryService {
     }
 
     private WeeklyDataSnapshot buildSnapshot() {
-        LocalDate weekEnd = LocalDate.now().minusDays(1);
+        LocalDate weekEnd = LocalDate.now();
         LocalDate weekStart = weekEnd.minusDays(6);
 
         Map<String, BigDecimal> spendingByCategory = expenseRepository

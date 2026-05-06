@@ -1,0 +1,38 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://aws-1-eu-west-2.pooler.supabase.com:5432/postgres?prepareThreshold=0
+    username: postgres.bsbypoyjtusgcpjtfrdy
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 3
+      minimum-idle: 1
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+        type:
+          preferred_uuid_jdbc_type: UUID
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    validate-on-migrate: true
+    baseline-on-migrate: true
+    baseline-version: 0
+
+logging:
+  level:
+    com.vfa.vault: INFO
+    org.flywaydb: INFO
+
+vault:
+  frontend-url: ${FRONTEND_URL:http://localhost:3000}
+  auth:
+    jwt-secret: ${VAULT_JWT_SECRET:please-change-this-secret-to-something-long}
+    cookie-secure: true
+    cookie-same-site: None
