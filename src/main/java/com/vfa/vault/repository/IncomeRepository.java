@@ -44,4 +44,13 @@ public interface IncomeRepository extends JpaRepository<Income, UUID> {
         List<Object[]> sumByCategoryBetweenDatesRaw(
             @Param("start") LocalDate start,
             @Param("end") LocalDate end);
+
+    @Query("""
+            SELECT ic.name AS category, SUM(i.amount) AS total
+            FROM Income i JOIN i.incomeCategory ic
+            WHERE FUNCTION('TO_CHAR', i.incomeDate, 'YYYY-MM') = :month
+            GROUP BY ic.name
+            ORDER BY total DESC
+            """)
+    List<Object[]> sumByCategoryForMonth(@Param("month") String month);
 }

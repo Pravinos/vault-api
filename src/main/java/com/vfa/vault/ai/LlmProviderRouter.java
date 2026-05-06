@@ -51,6 +51,10 @@ public class LlmProviderRouter {
                 .model(model)
                 .temperature(0.3);
 
+        if ("groq".equals(provider) && task == TaskType.CHAT) {
+            options.parallelToolCalls(false);
+        }
+
         ChatClient.Builder builder = ChatClient.builder(baseModel)
                 .defaultSystem(systemPrompt)
                 .defaultOptions(options);

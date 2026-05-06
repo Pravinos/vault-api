@@ -158,12 +158,11 @@ public class FinanceTools {
 
     @Tool(description = "Get total income grouped by category for a given month. Month format: YYYY-MM")
     public Map<String, Double> getIncomeByCategory(String month) {
-        return incomeRepository.findByFilters(month, null).stream()
-                .collect(Collectors.groupingBy(
-                        i -> i.getIncomeCategory().getName(),
-                        Collectors.collectingAndThen(
-                                Collectors.reducing(BigDecimal.ZERO, Income::getAmount, BigDecimal::add),
-                                BigDecimal::doubleValue)));
+        return incomeRepository.sumByCategoryForMonth(month).stream()
+                .collect(Collectors.toMap(
+                        row -> (String) row[0],
+                        row -> ((BigDecimal) row[1]).doubleValue()
+                ));
     }
 
     @Tool(description = "Get net cash flow (income minus expenses) for a given month. Month format: YYYY-MM")
