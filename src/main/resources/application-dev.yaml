@@ -1,0 +1,42 @@
+spring:
+  datasource:
+    url: "jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;NON_KEYWORDS=KEY,VALUE;INIT=CREATE DOMAIN IF NOT EXISTS goal_type AS VARCHAR(50)\\;CREATE DOMAIN IF NOT EXISTS account_type AS VARCHAR(50)"
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+    hikari:
+      maximum-pool-size: 3
+      minimum-idle: 1
+
+  jpa:
+    hibernate:
+      ddl-auto: drop-and-create
+    open-in-view: false
+    database-platform: org.hibernate.dialect.H2Dialect
+    properties:
+      hibernate:
+        format_sql: true
+        physical_naming_strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
+        implicit_naming_strategy: org.hibernate.boot.model.naming.ImplicitNamingStrategyLegacyJpaImpl
+        generate_statistics: false
+
+  h2:
+    console:
+      enabled: true
+
+  flyway:
+    enabled: false
+
+logging:
+  level:
+    com.vfa.vault: DEBUG
+    org.flywaydb: INFO
+
+vault:
+  frontend-url: http://localhost:3000
+  auth:
+    jwt-secret: dev-secret-for-local-testing-only
+    jwt-expiry-hours: 24
+    cookie-name: vault_token
+    cookie-secure: false
+    cookie-same-site: Lax
