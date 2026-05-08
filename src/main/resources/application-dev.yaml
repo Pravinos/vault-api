@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: "jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;NON_KEYWORDS=KEY,VALUE;INIT=CREATE DOMAIN IF NOT EXISTS goal_type AS VARCHAR(50)\\;CREATE DOMAIN IF NOT EXISTS account_type AS VARCHAR(50)"
+    url: "jdbc:h2:file:./dev_db;MODE=PostgreSQL;NON_KEYWORDS=KEY,VALUE;INIT=CREATE DOMAIN IF NOT EXISTS goal_type AS VARCHAR(50)\\;CREATE DOMAIN IF NOT EXISTS account_type AS VARCHAR(50)"
     driver-class-name: org.h2.Driver
     username: sa
     password:
@@ -10,7 +10,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: drop-and-create
+      ddl-auto: update
     defer-datasource-initialization: true
     open-in-view: false
     database-platform: org.hibernate.dialect.H2Dialect
@@ -30,7 +30,7 @@ spring:
 
   sql:
     init:
-      mode: always
+      mode: never
       data-locations: classpath:dev-data.sql
 
 logging:
