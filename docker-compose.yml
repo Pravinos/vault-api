@@ -8,8 +8,13 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DB_PASSWORD: ${DB_PASSWORD}
-      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-production}
+      PROD_DB_USERNAME: ${PROD_DB_USERNAME}
+      PROD_DB_PASSWORD: ${PROD_DB_PASSWORD}
+      FRONTEND_URL: ${FRONTEND_URL:-https://vault-frontend-lake.vercel.app}
+      VAULT_JWT_SECRET: ${VAULT_JWT_SECRET}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
       interval: 30s

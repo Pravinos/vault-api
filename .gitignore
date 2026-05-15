@@ -36,6 +36,9 @@ build/
 .env
 .env.*
 !.env.example
+!.env.properties.example
+dev.db
+dev_db*
 
 ### Logs ###
 *.log
