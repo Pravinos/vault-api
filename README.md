@@ -20,7 +20,7 @@ Vault is a personal finance API protected by a single vault password with JWT-ba
 - **LLM Routing** – per-task provider/model selection (Groq, OpenAI, LM Studio)
 - **Model Discovery** – live LM Studio and Groq model list endpoints
 - **Manual AI Summary Generation** – trigger summary generation from API
-- **Spring Profiles** – dev (H2) and prod (PostgreSQL) configurations for easy local development
+- **Spring Profiles** – dev (PostgreSQL) and prod (PostgreSQL) configurations for easy local development
 
 ## Tech Stack
 
@@ -46,58 +46,72 @@ Vault is a personal finance API protected by a single vault password with JWT-ba
 
 ### Environment Setup
 
-Create a `.env` file in the project root with:
+Use a single centralized properties file that Spring can parse directly. Copy the example and edit values:
 
-```properties
-# Database
-DB_PASSWORD=your_postgres_password
-
-# JWT & Auth (Required for production)
-VAULT_JWT_SECRET=your-long-random-secret-min-32-chars
-VAULT_COOKIE_SECURE=true          # false in local dev, true in production
-VAULT_COOKIE_SAME_SITE=None       # "None" for cross-origin (Vercel), "Strict" for same-site
-FRONTEND_URL=https://your-frontend.vercel.app
-
-# AI Providers (Optional)
-GROQ_API_KEY=your_groq_api_key
-OPENAI_API_KEY=lm-studio
+```powershell
+Copy-Item .env.properties.example .env.properties
+# edit .env.properties to set DB_USERNAME, DB_PASSWORD and other values
 ```
 
-**Important:** `VAULT_JWT_SECRET` must be at least 32 characters of random data (use `openssl rand -base64 32` to generate). This is the signing key for all JWT tokens.
+Example properties you must set:
+
+```properties
+# Active profile: dev or prod
+SPRING_PROFILES_ACTIVE=dev
+
+# Database
+DB_USERNAME=postgres.iesnxqvdiyitngarqdof
+DB_PASSWORD=your_postgres_password
+
+# App secrets
+VAULT_JWT_SECRET=your-long-random-secret-min-32-chars
+FRONTEND_URL=http://localhost:3000
+
+# AI providers (optional)
+GROQ_API_KEY=your_groq_api_key
+OPENAI_API_KEY=your_openai_api_key
+```
+
+**Important:** `VAULT_JWT_SECRET` must be at least 32 characters of random data (use `openssl rand -base64 32` to generate).
 
 ### Running Locally
 
-Using Maven Wrapper (PowerShell):
+Using Maven Wrapper (PowerShell/Bash):
+
+Recommended: keep secrets out of YAML. Use the centralized `.env.properties` (DO NOT commit it).
+
+PowerShell (dot-source loader to set envs in current session):
 
 ```powershell
-# Start with dev profile (H2 in-memory database, auto-loads dev data)
-$env:SPRING_PROFILES_ACTIVE="dev"
+. .\scripts\load-env.ps1
+$env:SPRING_PROFILES_ACTIVE='dev'
 .\mvnw.cmd spring-boot:run
-
-# Start with prod profile (PostgreSQL, Flyway migrations, requires DB_PASSWORD)
-$env:DB_PASSWORD="your_postgres_password"
-$env:SPRING_PROFILES_ACTIVE="prod"
-.\mvnw.cmd spring-boot:run
-
-# Compile only
-.\mvnw.cmd compile
-
-# Run tests
-.\mvnw.cmd test
 ```
+
+Bash:
+
+```bash
+source ./scripts/load-env.sh
+export SPRING_PROFILES_ACTIVE=dev
+./mvnw spring-boot:run
+```
+
+Notes:
+- Keep `.env.properties` locally and never commit it. `.gitignore` already excludes `.env*` files.
+- For CI or hosting (Render, Docker, Kubernetes) set secrets via the platform's secret manager.
+- You can still override the profile at runtime with `-Dspring-boot.run.profiles=dev`.
 
 ### Spring Profiles
 
 The application supports two profiles for different environments:
 
 #### **dev** Profile (Local Development)
-- **Database**: H2 in-memory (no PostgreSQL required)
-- **Migrations**: Flyway disabled
-- **Data**: Auto-loads `dev-data.sql` on startup
-- **JPA**: `ddl-auto: drop-and-create` (recreates schema each startup)
-- **Auth**: `jwt-secret: dev-secret-for-local-testing-only`
-- **Cookie**: Secure=false, SameSite=Lax (works over HTTP)
-- **Logging**: DEBUG level for `com.vfa.vault`
+- **Database**: PostgreSQL (Supabase dev project)
+- **Migrations**: Flyway enabled with validation
+- **JPA**: `ddl-auto: validate`
+- **Auth**: Requires `VAULT_JWT_SECRET` environment variable
+- **Cookie**: Secure=true, SameSite=None
+- **Logging**: INFO level
 
 #### **prod** Profile (Production & Staging)
 - **Database**: PostgreSQL with connection pooling
