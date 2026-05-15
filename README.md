@@ -302,12 +302,24 @@ Vault uses a **single shared password** to protect all data. There is no user re
    └─ Returns Set-Cookie with JWT
 
 3. Login (subsequent times)
-   POST /api/v1/auth/login { password: "my-password" }
-   ├─ Password compared against stored hash
-   └─ On match, returns Set-Cookie with JWT
-   └─ Rate limited: 5 attempts per 15 minutes per IP
+  POST /api/v1/auth/login { password: "my-password" }
+  ├─ Password compared against stored hash
+  └─ On match, returns Set-Cookie with JWT
+  └─ Rate limited: 5 attempts per 15 minutes per IP
 
-4. Authenticated requests
+4. Password Reset (forgotten password)
+  POST /api/v1/auth/reset-password { newPassword: "new-pass" }
+  ├─ Unauthenticated recovery endpoint — the frontend proxy must validate a `PASSWORD_RESET_TOKEN` before calling this endpoint
+  ├─ Validates `newPassword` (min 8 chars), overwrites stored BCrypt hash, issues a fresh JWT and sets the cookie
+  └─ Rate limited: 5 attempts per 15 minutes per IP
+
+5. Change Password (authenticated)
+  POST /api/v1/auth/change-password { currentPassword: "old", newPassword: "new" }
+  ├─ Requires a valid JWT (HttpOnly cookie or `Authorization: Bearer <token>` header)
+  ├─ Verifies `currentPassword` against the stored hash, validates `newPassword` (min 8 chars and different), overwrites the hash, and issues a fresh JWT
+  └─ Rate limited: 5 attempts per 15 minutes per IP
+
+6. Authenticated requests
    GET /api/v1/expenses
    ├─ Browser automatically includes cookie
    ├─ JwtFilter extracts token from cookie
@@ -326,7 +338,7 @@ Vault uses a **single shared password** to protect all data. There is no user re
 
 ### Rate Limiting
 
-- **Endpoints protected**: `/api/v1/auth/setup` and `/api/v1/auth/login`
+- **Endpoints protected**: `/api/v1/auth/setup`, `/api/v1/auth/login`, `/api/v1/auth/reset-password`, and `/api/v1/auth/change-password`
 - **Limit**: 5 attempts per 15 minutes per client IP
 - **IP detection**: Proxy-aware (checks `X-Forwarded-For` and `X-Real-IP` headers)
 - **On limit exceeded**: HTTP 429 with error message
