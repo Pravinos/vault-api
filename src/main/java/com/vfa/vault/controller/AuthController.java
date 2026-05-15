@@ -1,11 +1,8 @@
 package com.vfa.vault.controller;
 
-import com.vfa.vault.config.CookieUtil;
-import com.vfa.vault.config.JwtUtil;
-import com.vfa.vault.entity.AppConfig;
-import com.vfa.vault.repository.AppConfigRepository;
-import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
+import java.util.Map;
+import java.util.Optional;
+
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
@@ -17,8 +14,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Map;
-import java.util.Optional;
+import com.vfa.vault.config.CookieUtil;
+import com.vfa.vault.config.JwtUtil;
+import com.vfa.vault.entity.AppConfig;
+import com.vfa.vault.repository.AppConfigRepository;
+
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -86,6 +88,72 @@ public class AuthController {
                 .body(Map.of("error", "Wrong password"));
     }
 
+    @PostMapping("/reset-password")
+    public ResponseEntity<Map<String, String>> resetPassword(@RequestBody ResetPasswordRequest request,
+                                                             HttpServletResponse response) {
+        if (request.newPassword() == null || request.newPassword().length() < 8) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Password must be at least 8 characters."));
+        }
+
+        Optional<AppConfig> existing = appConfigRepository.findById(PASSWORD_HASH_KEY);
+        if (existing.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("error", "App not configured"));
+        }
+
+        AppConfig config = existing.get();
+        config.setValue(passwordEncoder.encode(request.newPassword()));
+        appConfigRepository.save(config);
+
+        String token = jwtUtil.generate();
+        ResponseCookie cookie = cookieUtil.buildTokenCookie(token);
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+
+        return ResponseEntity.ok(Map.of("token", token));
+    }
+
+    @PostMapping("/change-password")
+    public ResponseEntity<Map<String, String>> changePassword(@RequestBody ChangePasswordRequest request,
+                                                              HttpServletResponse response) {
+        if (request.currentPassword() == null || request.newPassword() == null) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "currentPassword and newPassword are required."));
+        }
+
+        if (request.newPassword().length() < 8) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Password must be at least 8 characters."));
+        }
+
+        if (request.currentPassword().equals(request.newPassword())) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "New password must differ from the current password."));
+        }
+
+        Optional<AppConfig> passwordConfig = appConfigRepository.findById(PASSWORD_HASH_KEY);
+        if (passwordConfig.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("error", "App not configured"));
+        }
+
+        String hash = passwordConfig.get().getValue();
+        if (!passwordEncoder.matches(request.currentPassword(), hash)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Current password is incorrect."));
+        }
+
+        AppConfig config = passwordConfig.get();
+        config.setValue(passwordEncoder.encode(request.newPassword()));
+        appConfigRepository.save(config);
+
+        String token = jwtUtil.generate();
+        ResponseCookie cookie = cookieUtil.buildTokenCookie(token);
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+
+        return ResponseEntity.ok(Map.of("token", token));
+    }
+
     @PostMapping("/logout")
     public ResponseEntity<Map<String, String>> logout(HttpServletResponse response) {
         ResponseCookie cookie = cookieUtil.buildClearCookie();
@@ -107,5 +175,11 @@ public class AuthController {
     }
 
     public record PasswordRequest(String password) {
+    }
+
+    public record ResetPasswordRequest(String newPassword) {
+    }
+
+    public record ChangePasswordRequest(String currentPassword, String newPassword) {
     }
 }

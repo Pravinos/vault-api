@@ -43,7 +43,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
 
         String path = request.getRequestURI();
-        boolean isAuthEndpoint = path.equals("/api/v1/auth/login") || path.equals("/api/v1/auth/setup");
+        boolean isAuthEndpoint = path.equals("/api/v1/auth/login")
+                || path.equals("/api/v1/auth/setup")
+                || path.equals("/api/v1/auth/reset-password")
+                || path.equals("/api/v1/auth/change-password");
         boolean isPost = HttpMethod.POST.matches(request.getMethod());
         return !(isAuthEndpoint && isPost);
     }

@@ -32,6 +32,13 @@ public class JwtFilter extends OncePerRequestFilter {
 
         String token = cookieUtil.extractToken(request);
 
+        if (token == null) {
+            String authHeader = request.getHeader("Authorization");
+            if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                token = authHeader.substring(7);
+            }
+        }
+
         if (token != null && jwtUtil.isValid(token)) {
             UsernamePasswordAuthenticationToken authentication =
                     new UsernamePasswordAuthenticationToken("vault-owner", null, List.of());
