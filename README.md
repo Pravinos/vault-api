@@ -254,7 +254,7 @@ src/main/java/com/vfa/vault/
 
 src/main/resources/
 ├── application.yaml               # Spring Boot configuration
-├── db/migration/                  # Flyway SQL migrations (18 versions)
+├── db/migration/                  # Flyway SQL migrations (19 versions)
 │   ├── V1__create_categories.sql
 │   ├── V2__create_expenses.sql
 │   ├── V3__create_goals.sql
@@ -272,7 +272,8 @@ src/main/resources/
 │   ├── V15__set_groq_llama_defaults.sql
 │   ├── V16__remove_soft_delete_from_accounts.sql
 │   ├── V17__create_transfers.sql
-│   └── V18__transfer_reversal_guards.sql
+│   ├── V18__transfer_reversal_guards.sql
+│   └── V19__expand_categories.sql
 └── templates/                     # Static resources
 ```
 
@@ -375,7 +376,7 @@ Vault uses a **single shared password** to protect all data. There is no user re
 | `name` | VARCHAR(50) | NOT NULL, UNIQUE |
 | `icon` | VARCHAR(10) | — |
 
-*Seeded with default rows in [V1__create_categories.sql](src/main/resources/db/migration/V1__create_categories.sql)*
+*Seeded with default rows in [V1__create_categories.sql](src/main/resources/db/migration/V1__create_categories.sql) and expanded in [V19__expand_categories.sql](src/main/resources/db/migration/V19__expand_categories.sql)*
 
 ### Expenses
 
