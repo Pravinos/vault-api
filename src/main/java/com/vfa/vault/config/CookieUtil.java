@@ -25,24 +25,49 @@ public class CookieUtil {
     @Value("${vault.auth.jwt-expiry-hours}")
     private int expiryHours;
 
-    public ResponseCookie buildTokenCookie(String token) {
+    public ResponseCookie buildTokenCookie(String token, jakarta.servlet.http.HttpServletRequest request) {
+        boolean isSecure = request.isSecure() || "true".equalsIgnoreCase(System.getenv("VAULT_COOKIE_FORCE_SECURE"));
+
+        boolean secureFlag = isSecure;
+        String env = System.getenv("VAULT_COOKIE_SECURE");
+        if (env != null && env.equalsIgnoreCase("false") && !request.isSecure()) {
+            secureFlag = false;
+        } else if ((env == null || env.equalsIgnoreCase("true")) && !request.isSecure()) {
+            // running over HTTP but env requests secure cookies: warn and keep secure=true for safety
+            if (secureFlag) {
+                System.err.println("WARNING: Request is HTTP but VAULT_COOKIE_SECURE is true; sending Secure cookie.");
+            }
+        }
+
+        String sameSiteValue = secureFlag ? "None" : "Lax";
+
         return ResponseCookie.from(cookieName, token)
-                .httpOnly(true)
-                .secure(secure)
-                .path("/")
-                .maxAge(Duration.ofHours(expiryHours))
-                .sameSite(sameSite)
-                .build();
+            .httpOnly(true)
+            .secure(secureFlag)
+            .path("/")
+            .maxAge(Duration.ofHours(expiryHours))
+            .sameSite(sameSiteValue)
+            .build();
     }
 
-    public ResponseCookie buildClearCookie() {
+    public ResponseCookie buildClearCookie(jakarta.servlet.http.HttpServletRequest request) {
+        boolean isSecure = request.isSecure() || "true".equalsIgnoreCase(System.getenv("VAULT_COOKIE_FORCE_SECURE"));
+
+        boolean secureFlag = isSecure;
+        String env = System.getenv("VAULT_COOKIE_SECURE");
+        if (env != null && env.equalsIgnoreCase("false") && !request.isSecure()) {
+            secureFlag = false;
+        }
+
+        String sameSiteValue = secureFlag ? "None" : "Lax";
+
         return ResponseCookie.from(cookieName, "")
-                .httpOnly(true)
-                .secure(secure)
-                .path("/")
-                .maxAge(0)
-                .sameSite(sameSite)
-                .build();
+            .httpOnly(true)
+            .secure(secureFlag)
+            .path("/")
+            .maxAge(0)
+            .sameSite(sameSiteValue)
+            .build();
     }
 
     public String extractToken(HttpServletRequest request) {
