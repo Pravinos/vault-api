@@ -34,5 +34,5 @@ vault:
   frontend-url: ${DEV_FRONTEND_URL:http://localhost:3000}
   auth:
     jwt-secret: ${VAULT_JWT_SECRET:please-change-this-secret-to-something-long}
-    cookie-secure: true
+    cookie-secure: false
     cookie-same-site: None

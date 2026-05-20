@@ -749,7 +749,6 @@ Transfer account validation is based on account existence. Accounts have no acti
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/auth/register` | Register user |
 | `POST` | `/auth/login` | Login, returns JWT |
 | `POST` | `/auth/refresh` | Refresh JWT token |
 

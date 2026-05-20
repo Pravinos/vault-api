@@ -110,7 +110,7 @@ The application supports two profiles for different environments:
 - **Migrations**: Flyway enabled with validation
 - **JPA**: `ddl-auto: validate`
 - **Auth**: Requires `VAULT_JWT_SECRET` environment variable
-- **Cookie**: Secure=true, SameSite=None
+- **Cookie**: Secure=false by default for local HTTP; SameSite=Lax when insecure, SameSite=None when Secure=true
 - **Logging**: INFO level
 
 #### **prod** Profile (Production & Staging)
@@ -348,8 +348,8 @@ Vault uses a **single shared password** to protect all data. There is no user re
 ### Deployment Notes
 
 **For local development:**
-- `VAULT_COOKIE_SECURE=false` (cookies work over HTTP)
-- `VAULT_COOKIE_SAME_SITE=Strict` (cookies only sent to same domain)
+- `VAULT_COOKIE_SECURE=false` (cookies work over HTTP; CookieUtil will set SameSite=Lax when insecure)
+- `VAULT_COOKIE_FORCE_SECURE=true` can be used to force Secure=true even on HTTP (not recommended)
 
 **For production (Render backend + Vercel frontend):**
 - `VAULT_COOKIE_SECURE=true` (cookies only sent over HTTPS)
