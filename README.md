@@ -13,7 +13,7 @@ Vault is a personal finance API protected by a single vault password with JWT-ba
 - **Income Tracking** – by category, linked to an account
 - **Transfers** – account-to-account transfers with one-time reversal support
 - **Investment Accounts** – optional metadata with checkpoint-based return tracking
-- **Financial Goals** – lifecycle management (create, update, contribute, deactivate)
+ - **Financial Goals** – lifecycle management (create, update, deactivate) with account-linked live progress
 - **Unified Dashboard API** – `GET /api/v1/dashboard` returns pre-calculated dashboard metrics
 - **Summaries & Analytics** – monthly and weekly summaries with aggregate analytics
 - **AI Assistant** – chat over real finance data with tool-calling capabilities
@@ -274,6 +274,7 @@ src/main/resources/
 │   ├── V17__create_transfers.sql
 │   ├── V18__transfer_reversal_guards.sql
 │   └── V19__expand_categories.sql
+│   └── V20__add_goal_accounts.sql
 └── templates/                     # Static resources
 ```
 
@@ -405,6 +406,16 @@ Vault uses a **single shared password** to protect all data. There is no user re
 | `deadline` | DATE | — |
 | `created_at` | TIMESTAMP | NOT NULL, DEFAULT NOW() |
 | `is_active` | BOOLEAN | NOT NULL, DEFAULT TRUE |
+
+Note: The `saved_amount` column is retained for backward compatibility but is no longer authoritative. Goals now derive their live saved amount by summing the calculated balances of linked accounts. A join table `goal_accounts` links goals to accounts (created by migration `V20__add_goal_accounts.sql`):
+
+```sql
+CREATE TABLE goal_accounts (
+  goal_id    UUID NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+  account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  PRIMARY KEY (goal_id, account_id)
+);
+```
 
 ### Weekly Summaries
 
@@ -616,8 +627,8 @@ Vault uses a **single shared password** to protect all data. There is no user re
 | POST | `/goals` | Create new goal |
 | PUT | `/goals/{id}` | Update goal |
 | DELETE | `/goals/{id}` | Deactivate goal |
-| POST | `/goals/{id}/contribute` | Add contribution to goal |
-| GET | `/goals/{id}/progress` | Get goal progress |
+| POST | `/goals/{id}/accounts` | Link an account to a goal (body: `{ "accountId": "uuid" }`) |
+| DELETE | `/goals/{id}/accounts/{accountId}` | Unlink an account from a goal |
 
 ### Accounts
 
@@ -690,6 +701,8 @@ Vault uses a **single shared password** to protect all data. There is no user re
 - Weekly summary generation logs each step and returns readable error payloads on failure.
 - Model discovery responses are cached in `llm_provider_config`.
 - `FinanceTools.getDashboardSummary()` uses `DashboardService.getDashboard()` so AI and dashboard use identical calculations.
+ - `FinanceTools.getDashboardSummary()` uses `DashboardService.getDashboard()` so AI and dashboard use identical calculations.
+ - `FinanceTools.getGoalProgress()` now returns live goal progress derived from linked account balances, includes `isOverdue`, and a summary of linked accounts contributing to each goal.
 
 ## Balance Calculation
 
@@ -748,8 +761,9 @@ Dashboard metrics are computed server-side in `DashboardService` and exposed via
 - `name`: Required, max 100 characters
 - `description`: max 255 characters
 - `targetAmount`: > 0
-- `contribution`: > 0 (when adding)
 - `deadline`: optional but must be future date if provided
+
+- `accountIds`: optional set of account UUIDs to link accounts to the goal (live saved amount is derived from linked accounts)
 
 ### Investment Checkpoint
 

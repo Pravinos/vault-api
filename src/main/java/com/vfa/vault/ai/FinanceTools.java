@@ -42,13 +42,7 @@ public class FinanceTools {
             double changePercentage
     ) {}
 
-    public record GoalProgress(
-            String name,
-            double targetAmount,
-            double savedAmount,
-            double progressPercentage,
-            long daysRemaining
-    ) {}
+    
 
     public record DailySpend(String date, double total) {}
 
@@ -103,17 +97,37 @@ public class FinanceTools {
                 lastMonth, lastTotal.doubleValue(), change, changePct);
     }
 
-    @Tool(description = "Get progress for all active goals: name, target, saved, percentage, and days remaining")
+    @Tool(description = "Get progress for all active goals: name, target, live saved amount derived from linked account balances, percentage complete, days remaining, and whether the goal is overdue.")
     public List<GoalProgress> getGoalProgress() {
         return goalService.findAllActive().stream()
                 .map(g -> new GoalProgress(
                         g.name(),
-                        g.targetAmount().doubleValue(),
-                        g.savedAmount().doubleValue(),
+                        g.targetAmount() != null ? g.targetAmount().doubleValue() : 0.0,
+                        g.savedAmount() != null ? g.savedAmount().doubleValue() : 0.0,
                         g.progressPercentage(),
-                        g.daysRemaining()))
+                        g.daysRemaining(),
+                        g.isOverdue(),
+                        g.linkedAccounts() != null ? g.linkedAccounts().stream()
+                                .map(la -> new LinkedAccountSummary(
+                                        la.id(),
+                                        la.name(),
+                                        la.accountType(),
+                                        la.calculatedBalance().doubleValue()))
+                                .toList() : List.of()))
                 .toList();
     }
+
+    public record LinkedAccountSummary(String id, String name, String accountType, double calculatedBalance) {}
+
+    public record GoalProgress(
+            String name,
+            double targetAmount,
+            double savedAmount,
+            double progressPercentage,
+            long daysRemaining,
+            boolean isOverdue,
+            List<LinkedAccountSummary> linkedAccounts
+    ) {}
 
     @Tool(description = "Get daily spending totals for the last N days. Useful for trend questions.")
     public List<DailySpend> getDailySpending(int days) {

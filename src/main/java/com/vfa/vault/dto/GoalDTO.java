@@ -1,15 +1,18 @@
 package com.vfa.vault.dto;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+
 import com.vfa.vault.entity.Goal;
+
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
-
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.UUID;
 
 public class GoalDTO {
 
@@ -28,7 +31,9 @@ public class GoalDTO {
             @NotNull(message = "Goal type is required")
             Goal.GoalType goalType,
 
-            LocalDate deadline
+            LocalDate deadline,
+
+            Set<UUID> accountIds
     ) {}
 
     public record Response(
@@ -42,12 +47,17 @@ public class GoalDTO {
             LocalDateTime createdAt,
             Boolean isActive,
             double progressPercentage,
-            long daysRemaining
+            long daysRemaining,
+            boolean isOverdue,
+            List<LinkedAccountSummary> linkedAccounts
     ) {}
 
-    public record ContributeRequest(
-            @NotNull(message = "Amount is required")
-            @DecimalMin(value = "0.01", message = "Amount must be greater than 0")
-            BigDecimal amount
+    public record LinkedAccountSummary(
+            UUID id,
+            String name,
+            String accountType,
+            BigDecimal calculatedBalance
     ) {}
+
+        // ContributeRequest removed: contributions are derived from linked account balances now.
 }

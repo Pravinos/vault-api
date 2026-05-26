@@ -3,6 +3,8 @@ package com.vfa.vault.entity;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 import org.hibernate.annotations.JdbcTypeCode;
@@ -13,7 +15,11 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.Data;
@@ -38,6 +44,14 @@ public class Goal {
 
     @Column(name = "saved_amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal savedAmount = BigDecimal.ZERO;
+
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+        name = "goal_accounts",
+        joinColumns = @JoinColumn(name = "goal_id"),
+        inverseJoinColumns = @JoinColumn(name = "account_id")
+    )
+    private Set<com.vfa.vault.entity.Account> linkedAccounts = new HashSet<>();
 
     @Enumerated(EnumType.STRING)
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)

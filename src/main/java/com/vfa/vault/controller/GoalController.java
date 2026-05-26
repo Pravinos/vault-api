@@ -1,6 +1,7 @@
 package com.vfa.vault.controller;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
@@ -57,15 +58,19 @@ public class GoalController {
         return ResponseEntity.noContent().build();
     }
 
-    @PostMapping("/{id}/contribute")
-    public ResponseEntity<GoalDTO.Response> contribute(
+    @PostMapping("/{id}/accounts")
+    public ResponseEntity<GoalDTO.Response> linkAccount(
             @PathVariable UUID id,
-            @Valid @RequestBody GoalDTO.ContributeRequest request) {
-        return ResponseEntity.ok(goalService.contribute(id, request));
+            @Valid @RequestBody Map<String, UUID> body) {
+        UUID accountId = body.get("accountId");
+        if (accountId == null) throw new IllegalArgumentException("accountId is required");
+        return ResponseEntity.ok(goalService.linkAccount(id, accountId));
     }
 
-    @GetMapping("/{id}/progress")
-    public ResponseEntity<GoalDTO.Response> getProgress(@PathVariable UUID id) {
-        return ResponseEntity.ok(goalService.findById(id));
+    @DeleteMapping("/{id}/accounts/{accountId}")
+    public ResponseEntity<GoalDTO.Response> unlinkAccount(
+            @PathVariable UUID id,
+            @PathVariable UUID accountId) {
+        return ResponseEntity.ok(goalService.unlinkAccount(id, accountId));
     }
 }
