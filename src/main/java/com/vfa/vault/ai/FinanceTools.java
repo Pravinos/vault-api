@@ -8,6 +8,7 @@ import java.time.format.DateTimeParseException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 import org.springframework.ai.tool.annotation.Tool;
@@ -107,17 +108,19 @@ public class FinanceTools {
                         g.progressPercentage(),
                         g.daysRemaining(),
                         g.isOverdue(),
-                        g.linkedAccounts() != null ? g.linkedAccounts().stream()
-                                .map(la -> new LinkedAccountSummary(
-                                        la.id(),
-                                        la.name(),
-                                        la.accountType(),
-                                        la.calculatedBalance().doubleValue()))
-                                .toList() : List.of()))
+                        g.linkedAccounts() != null
+                                ? g.linkedAccounts().stream()
+                                        .map(la -> new LinkedAccountSummary(
+                                                la.id(),
+                                                la.name(),
+                                                la.accountType(),
+                                                la.calculatedBalance()))
+                                        .toList()
+                                : List.<LinkedAccountSummary>of()))
                 .toList();
     }
 
-    public record LinkedAccountSummary(String id, String name, String accountType, double calculatedBalance) {}
+    public record LinkedAccountSummary(UUID id, String name, String accountType, BigDecimal calculatedBalance) {}
 
     public record GoalProgress(
             String name,
