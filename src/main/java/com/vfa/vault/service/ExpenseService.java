@@ -5,15 +5,19 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.vfa.vault.dto.CategoryDTO;
 import com.vfa.vault.dto.ExpenseDTO;
+import com.vfa.vault.dto.ExpenseHeatmapDTO;
 import com.vfa.vault.entity.Expense;
 import com.vfa.vault.exception.ResourceNotFoundException;
 import com.vfa.vault.repository.AccountRepository;
@@ -110,6 +114,26 @@ public class ExpenseService {
                 .toList();
 
         return new ExpenseDTO.MonthlySummary(month, total, byCategory);
+    }
+
+    @Transactional(readOnly = true)
+    public ExpenseHeatmapDTO getHeatmap(int year) {
+        if (year < 2000 || year > 2100) {
+            throw new IllegalArgumentException("year must be between 2000 and 2100");
+        }
+        LocalDate start = LocalDate.of(year, 1, 1);
+        LocalDate end = LocalDate.of(year, 12, 31);
+        List<Object[]> rows = expenseRepository.sumByDayForYear(start, end);
+        Map<LocalDate, BigDecimal> byDay = rows.stream()
+                .collect(Collectors.toMap(r -> (LocalDate) r[0], r -> (BigDecimal) r[1]));
+        List<ExpenseHeatmapDTO.DayTotal> days = new ArrayList<>();
+        BigDecimal max = BigDecimal.ZERO;
+        for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+            BigDecimal amount = byDay.getOrDefault(d, BigDecimal.ZERO);
+            if (amount.compareTo(max) > 0) max = amount;
+            days.add(new ExpenseHeatmapDTO.DayTotal(d.toString(), amount));
+        }
+        return new ExpenseHeatmapDTO(year, days, max);
     }
 
     @Transactional(readOnly = true)

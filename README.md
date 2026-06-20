@@ -10,11 +10,13 @@ Vault is a personal finance API protected by a single vault password with JWT-ba
 - **Rate Limiting** – 5 login/setup attempts per 15 minutes per IP
 - **Multi-Account Support** – Checking, Savings, Investment accounts with live balance calculation
 - **Expense Tracking** – by category, linked to an account
+- **Expense Heatmap** – daily spending totals for a calendar year (`GET /expenses/heatmap`) for calendar-style visualizations
+- **Category Budgets** – per-category monthly spending limits with ON_TRACK / WARNING (≥80%) / OVER_BUDGET status, upsert by category+month, and dashboard alerts
 - **Income Tracking** – by category, linked to an account
 - **Transfers** – account-to-account transfers with one-time reversal support
 - **Investment Accounts** – optional metadata with checkpoint-based return tracking
  - **Financial Goals** – lifecycle management (create, update, deactivate) with account-linked live progress
-- **Unified Dashboard API** – `GET /api/v1/dashboard` returns pre-calculated dashboard metrics
+- **Unified Dashboard API** – `GET /api/v1/dashboard` returns pre-calculated dashboard metrics, including budget alerts for the current month
 - **Summaries & Analytics** – monthly and weekly summaries with aggregate analytics
 - **AI Assistant** – chat over real finance data with tool-calling capabilities
 - **LLM Routing** – per-task provider/model selection (Groq, OpenAI, LM Studio)
@@ -157,6 +159,7 @@ src/main/java/com/vfa/vault/
 ├── controller/                    # REST API endpoints
 │   ├── AccountController.java
 │   ├── AiController.java
+│   ├── BudgetController.java
 │   ├── CategoryController.java
 │   ├── ExpenseController.java
 │   ├── GoalController.java
@@ -168,6 +171,7 @@ src/main/java/com/vfa/vault/
 ├── service/                       # Business logic & orchestration
 │   ├── AccountService.java
 │   ├── AccountBalanceService.java
+│   ├── BudgetService.java
 │   ├── CategoryService.java
 │   ├── ExpenseService.java
 │   ├── GoalService.java
@@ -179,6 +183,7 @@ src/main/java/com/vfa/vault/
 │   └── WeeklySummaryService.java
 ├── repository/                    # JPA data access
 │   ├── AccountRepository.java
+│   ├── BudgetRepository.java
 │   ├── CategoryRepository.java
 │   ├── ExpenseRepository.java
 │   ├── GoalRepository.java
@@ -192,6 +197,7 @@ src/main/java/com/vfa/vault/
 ├── entity/                        # JPA entity models
 │   ├── Account.java
 │   ├── AccountType.java           # Enum: CHECKING, SAVINGS, INVESTMENT
+│   ├── Budget.java
 │   ├── Category.java
 │   ├── Expense.java
 │   ├── Goal.java
@@ -212,6 +218,7 @@ src/main/java/com/vfa/vault/
 │   ├── AuthController.java        # /api/v1/auth/* (setup, login, verify, refresh, logout, status)
 │   ├── AccountController.java
 │   ├── AiController.java
+│   ├── BudgetController.java
 │   ├── CategoryController.java
 │   ├── ExpenseController.java
 │   ├── GoalController.java
@@ -221,11 +228,14 @@ src/main/java/com/vfa/vault/
 ├── dto/                           # Request/Response contracts
 │   ├── AccountDTO.java
 │   ├── AiConfigResponseDTO.java
+│   ├── BudgetDTO.java
+│   ├── BudgetSummaryDTO.java
 │   ├── AiConfigUpdateDTO.java
 │   ├── CategoryDTO.java
 │   ├── ChatRequestDTO.java
 │   ├── ChatResponseDTO.java
 │   ├── ExpenseDTO.java
+│   ├── ExpenseHeatmapDTO.java
 │   ├── GoalDTO.java
 │   ├── IncomeCategoryDTO.java
 │   ├── IncomeDTO.java
@@ -254,7 +264,7 @@ src/main/java/com/vfa/vault/
 
 src/main/resources/
 ├── application.yaml               # Spring Boot configuration
-├── db/migration/                  # Flyway SQL migrations (19 versions)
+├── db/migration/                  # Flyway SQL migrations (22 versions)
 │   ├── V1__create_categories.sql
 │   ├── V2__create_expenses.sql
 │   ├── V3__create_goals.sql
@@ -273,8 +283,10 @@ src/main/resources/
 │   ├── V16__remove_soft_delete_from_accounts.sql
 │   ├── V17__create_transfers.sql
 │   ├── V18__transfer_reversal_guards.sql
-│   └── V19__expand_categories.sql
-│   └── V20__add_goal_accounts.sql
+│   ├── V19__expand_categories.sql
+│   ├── V20__add_goal_accounts.sql
+│   ├── V21__add_food_drink_categories.sql
+│   └── V22__create_budgets.sql
 └── templates/                     # Static resources
 ```
 
@@ -377,7 +389,7 @@ Vault uses a **single shared password** to protect all data. There is no user re
 | `name` | VARCHAR(50) | NOT NULL, UNIQUE |
 | `icon` | VARCHAR(10) | — |
 
-*Seeded with default rows in [V1__create_categories.sql](src/main/resources/db/migration/V1__create_categories.sql) and expanded in [V19__expand_categories.sql](src/main/resources/db/migration/V19__expand_categories.sql)*
+*Seeded with default rows in [V1__create_categories.sql](src/main/resources/db/migration/V1__create_categories.sql), expanded in [V19__expand_categories.sql](src/main/resources/db/migration/V19__expand_categories.sql), and supplemented with Coffee, Drinks, and Groceries in [V21__add_food_drink_categories.sql](src/main/resources/db/migration/V21__add_food_drink_categories.sql)*
 
 ### Expenses
 
@@ -392,6 +404,26 @@ Vault uses a **single shared password** to protect all data. There is no user re
 | `created_at` | TIMESTAMP | NOT NULL, DEFAULT NOW() |
 
 *Indexes: `idx_expenses_date`, `idx_expenses_category`*
+
+### Budgets
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| `id` | UUID | PRIMARY KEY, DEFAULT gen_random_uuid() |
+| `category_id` | INT | NOT NULL, REFERENCES categories(id) |
+| `month` | DATE | NOT NULL (first day of month) |
+| `amount` | NUMERIC(10,2) | NOT NULL, CHECK (amount > 0) |
+| `created_at` | TIMESTAMP | NOT NULL, DEFAULT NOW() |
+
+*Unique constraint on `(category_id, month)`. Indexes: `idx_budgets_month`, `idx_budgets_category`. Created by [V22__create_budgets.sql](src/main/resources/db/migration/V22__create_budgets.sql).*
+
+Budget status is computed at query time by comparing category spending in the month against the budget amount:
+
+| Status | Condition |
+|--------|-----------|
+| `ON_TRACK` | Spent < 80% of budget |
+| `WARNING` | Spent ≥ 80% of budget |
+| `OVER_BUDGET` | Spent ≥ budget amount |
 
 ### Goals
 
@@ -617,6 +649,57 @@ CREATE TABLE goal_accounts (
 | DELETE | `/expenses/{id}` | Delete expense |
 | GET | `/expenses/summary` | Monthly expense summary (optional param: `month`) |
 | GET | `/expenses/stats` | Dashboard statistics |
+| GET | `/expenses/heatmap` | Daily expense totals for a calendar year (optional param: `year`, defaults to current year) |
+
+**GET /expenses/heatmap — response:**
+```json
+{
+  "year": 2026,
+  "days": [
+    { "date": "2026-01-01", "totalAmount": 42.50 },
+    { "date": "2026-01-02", "totalAmount": 0 }
+  ],
+  "maxDayAmount": 142.75
+}
+```
+
+*Returns one entry per day in the year (including zero-spend days). `maxDayAmount` is the highest daily total, useful for normalizing heatmap color intensity.*
+
+### Budgets
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/budgets` | List budgets for a month (required param: `month` in `YYYY-MM` format) |
+| POST | `/budgets` | Create or update a category budget (upsert by category + month) |
+| DELETE | `/budgets/{id}` | Delete a budget |
+| GET | `/budgets/summary` | Budget vs. actual spending with status (required param: `month`) |
+
+**POST /budgets — request:**
+```json
+{
+  "categoryId": 1,
+  "month": "2026-06",
+  "amount": 500.00
+}
+```
+
+**GET /budgets/summary — response (per category with a budget):**
+```json
+[
+  {
+    "categoryId": 1,
+    "categoryName": "Groceries",
+    "categoryIcon": "🛒",
+    "budgetAmount": 500.00,
+    "spentAmount": 412.30,
+    "remainingAmount": 87.70,
+    "percentageUsed": 82.46,
+    "status": "WARNING"
+  }
+]
+```
+
+*Summary results are sorted by `percentageUsed` descending. Status values: `ON_TRACK`, `WARNING`, `OVER_BUDGET`.*
 
 ### Goals
 
@@ -648,7 +731,7 @@ CREATE TABLE goal_accounts (
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/dashboard` | Single-source dashboard payload with net worth, account balances, month stats, and MoM deltas |
+| GET | `/dashboard` | Single-source dashboard payload with net worth, account balances, month stats, MoM deltas, and budget alerts |
 
 ### Transfers
 
@@ -700,9 +783,8 @@ CREATE TABLE goal_accounts (
 - Chat requests support optional `conversationId` for memory continuity.
 - Weekly summary generation logs each step and returns readable error payloads on failure.
 - Model discovery responses are cached in `llm_provider_config`.
-- `FinanceTools.getDashboardSummary()` uses `DashboardService.getDashboard()` so AI and dashboard use identical calculations.
- - `FinanceTools.getDashboardSummary()` uses `DashboardService.getDashboard()` so AI and dashboard use identical calculations.
- - `FinanceTools.getGoalProgress()` now returns live goal progress derived from linked account balances, includes `isOverdue`, and a summary of linked accounts contributing to each goal.
+- `FinanceTools.getDashboardSummary()` uses `DashboardService.getDashboard()` so AI and dashboard use identical calculations (including `budgetAlerts` for categories at WARNING or OVER_BUDGET).
+- `FinanceTools.getGoalProgress()` returns live goal progress derived from linked account balances, includes `isOverdue`, and a summary of linked accounts contributing to each goal.
 
 ## Balance Calculation
 
@@ -727,8 +809,9 @@ For **INVESTMENT** type accounts, the following derived fields are included:
 
 Dashboard metrics are computed server-side in `DashboardService` and exposed via `GET /api/v1/dashboard`.
 
-- Net worth, monthly totals, top category, and MoM percentages are pre-calculated in one backend response.
+- Net worth, monthly totals, top category, MoM percentages, and budget alerts are pre-calculated in one backend response.
 - Account cards are pre-computed (including investment return fields and display labels).
+- `budgetAlerts` includes only categories in `WARNING` or `OVER_BUDGET` status for the current month.
 - The AI tool `getDashboardSummary()` reuses the same service output to prevent calculation drift.
 
 **Transfer validation note:** accounts are validated by existence. The `accounts` table has no active/inactive flag after V16.
@@ -747,6 +830,12 @@ Dashboard metrics are computed server-side in `DashboardService` and exposed via
 - `note`: max 255 characters
 - `accountId`: Required
 - `categoryId`: Required (implicit through category)
+
+### Budget
+
+- `categoryId`: Required
+- `month`: Required, `YYYY-MM` format
+- `amount`: > 0
 
 ### Income
 

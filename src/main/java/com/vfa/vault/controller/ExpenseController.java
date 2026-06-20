@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.vfa.vault.dto.ExpenseDTO;
+import com.vfa.vault.dto.ExpenseHeatmapDTO;
 import com.vfa.vault.service.ExpenseService;
 
 import jakarta.validation.Valid;
@@ -67,5 +68,12 @@ public class ExpenseController {
     @GetMapping("/stats")
     public ResponseEntity<ExpenseDTO.Stats> getStats() {
         return ResponseEntity.ok(expenseService.getStats());
+    }
+
+    @GetMapping("/heatmap")
+    public ResponseEntity<ExpenseHeatmapDTO> getHeatmap(
+            @RequestParam(defaultValue = "#{T(java.time.LocalDate).now().getYear()}") int year
+    ) {
+        return ResponseEntity.ok(expenseService.getHeatmap(year));
     }
 }

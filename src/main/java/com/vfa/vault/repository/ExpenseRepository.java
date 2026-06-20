@@ -124,4 +124,7 @@ public interface ExpenseRepository extends JpaRepository<Expense, UUID> {
     List<Object[]> sumByCategoryIdForDateRange(
             @Param("start") LocalDate start,
             @Param("end") LocalDate end);
+
+    @Query("SELECT e.expenseDate, SUM(e.amount) FROM Expense e WHERE e.expenseDate >= :start AND e.expenseDate <= :end GROUP BY e.expenseDate ORDER BY e.expenseDate")
+    List<Object[]> sumByDayForYear(@Param("start") LocalDate start, @Param("end") LocalDate end);
 }
