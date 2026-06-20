@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.vfa.vault.dto.AccountDashboardDTO;
+import com.vfa.vault.dto.BudgetSummaryDTO;
 import com.vfa.vault.dto.DashboardResponseDTO;
 import com.vfa.vault.entity.Account;
 import com.vfa.vault.entity.AccountType;
@@ -37,6 +38,7 @@ public class DashboardService {
     private final IncomeRepository incomeRepository;
     private final TransferRepository transferRepository;
     private final InvestmentCheckpointRepository checkpointRepository;
+    private final BudgetService budgetService;
 
     @Transactional(readOnly = true)
     public DashboardResponseDTO getDashboard() {
@@ -112,6 +114,9 @@ public class DashboardService {
         String currentLabel = current.atDay(1).format(fmt);
         String lastLabel = last.atDay(1).format(fmt);
 
+        String currentMonth = current.format(DateTimeFormatter.ofPattern("yyyy-MM"));
+        List<BudgetSummaryDTO> budgetAlerts = budgetService.getBudgetAlerts(currentMonth);
+
         log.info("Dashboard computed: accounts={}, netWorth={}, manualNetWorth={}, drift={}, incomeThis={}, expensesThis={}, topCategory={} ({})",
                 accountDTOs.size(), calculatedNetWorth, manualNetWorth, drift, incomeThis, expensesThis, topCategoryName, topCategoryAmount);
 
@@ -132,6 +137,7 @@ public class DashboardService {
                 .lastMonthLabel(lastLabel)
                 .expensesMoMPercent(expenseMoM)
                 .incomeMoMPercent(incomeMoM)
+                .budgetAlerts(budgetAlerts)
                 .build();
     }
 
