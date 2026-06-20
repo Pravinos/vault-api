@@ -119,4 +119,9 @@ public interface ExpenseRepository extends JpaRepository<Expense, UUID> {
     List<Object[]> sumByCategoryBetweenDatesRaw(
             @Param("start") LocalDate start,
             @Param("end") LocalDate end);
+
+    @Query("SELECT e.category.id, SUM(e.amount) FROM Expense e WHERE e.expenseDate >= :start AND e.expenseDate < :end GROUP BY e.category.id")
+    List<Object[]> sumByCategoryIdForDateRange(
+            @Param("start") LocalDate start,
+            @Param("end") LocalDate end);
 }

@@ -36,4 +36,6 @@ public class DashboardResponseDTO {
 
     private BigDecimal expensesMoMPercent;
     private BigDecimal incomeMoMPercent;
+
+    private List<BudgetSummaryDTO> budgetAlerts;
 }
