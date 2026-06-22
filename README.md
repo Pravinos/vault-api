@@ -15,7 +15,7 @@ Vault is a personal finance API protected by a single vault password with JWT-ba
 - **Income Tracking** – by category, linked to an account
 - **Transfers** – account-to-account transfers with one-time reversal support
 - **Investment Accounts** – optional metadata with checkpoint-based return tracking
- - **Financial Goals** – lifecycle management (create, update, deactivate) with account-linked live progress
+- **Financial Goals** – lifecycle management (create, update, deactivate) with account-linked live progress
 - **Unified Dashboard API** – `GET /api/v1/dashboard` returns pre-calculated dashboard metrics, including budget alerts for the current month
 - **Summaries & Analytics** – monthly and weekly summaries with aggregate analytics
 - **AI Assistant** – chat over real finance data with tool-calling capabilities
@@ -62,7 +62,7 @@ Example properties you must set:
 SPRING_PROFILES_ACTIVE=dev
 
 # Database
-DB_USERNAME=postgres.iesnxqvdiyitngarqdof
+DB_USERNAME=postgres.your_db_username
 DB_PASSWORD=your_postgres_password
 
 # App secrets
@@ -157,16 +157,17 @@ src/main/java/com/vfa/vault/
 │   ├── LlmProviderRouter.java
 │   └── ModelDiscoveryService.java
 ├── controller/                    # REST API endpoints
+│   ├── AuthController.java        # /api/v1/auth/* (setup, login, verify, refresh, logout, status)
 │   ├── AccountController.java
 │   ├── AiController.java
 │   ├── BudgetController.java
 │   ├── CategoryController.java
+│   ├── DashboardController.java
 │   ├── ExpenseController.java
 │   ├── GoalController.java
 │   ├── IncomeCategoryController.java
 │   ├── IncomeController.java
 │   ├── TransferController.java
-│   ├── DashboardController.java
 │   └── WeeklySummaryController.java
 ├── service/                       # Business logic & orchestration
 │   ├── AccountService.java
@@ -197,6 +198,7 @@ src/main/java/com/vfa/vault/
 ├── entity/                        # JPA entity models
 │   ├── Account.java
 │   ├── AccountType.java           # Enum: CHECKING, SAVINGS, INVESTMENT
+│   ├── AppConfig.java             # Key-value store for vault configuration (password hash)
 │   ├── Budget.java
 │   ├── Category.java
 │   ├── Expense.java
@@ -214,17 +216,6 @@ src/main/java/com/vfa/vault/
 │   ├── JwtFilter.java             # Extracts JWT from cookie, sets SecurityContext
 │   ├── RateLimitFilter.java       # Rate limiting: 5 attempts per 15 min per IP
 │   └── CookieUtil.java            # Builds/clears HttpOnly cookies with SameSite policy
-├── controller/                    # REST API endpoints
-│   ├── AuthController.java        # /api/v1/auth/* (setup, login, verify, refresh, logout, status)
-│   ├── AccountController.java
-│   ├── AiController.java
-│   ├── BudgetController.java
-│   ├── CategoryController.java
-│   ├── ExpenseController.java
-│   ├── GoalController.java
-│   ├── IncomeCategoryController.java
-│   ├── IncomeController.java
-│   └── WeeklySummaryController.java
 ├── dto/                           # Request/Response contracts
 │   ├── AccountDTO.java
 │   ├── AiConfigResponseDTO.java
@@ -245,19 +236,6 @@ src/main/java/com/vfa/vault/
 │   ├── TransferDTO.java
 │   ├── TransferResponseDTO.java
 │   └── WeeklySummaryDTO.java
-├── entity/                        # JPA entity models
-│   ├── AppConfig.java             # Key-value store for vault configuration (password hash)
-│   ├── Account.java
-│   ├── Category.java
-│   ├── Expense.java
-│   ├── Goal.java
-│   ├── Income.java
-│   ├── IncomeCategory.java
-│   ├── InvestmentCheckpoint.java
-│   ├── InvestmentDetail.java
-│   ├── LlmProviderConfig.java
-│   ├── Transfer.java
-│   └── WeeklySummary.java
 └── exception/                     # Error handling
     ├── GlobalExceptionHandler.java
     └── ResourceNotFoundException.java
@@ -340,12 +318,12 @@ Vault uses a **single shared password** to protect all data. There is no user re
    ├─ Validates JWT signature and expiry
    └─ If valid, request proceeds; if expired, return 401
 
-5. Refresh
+7. Refresh
    POST /api/v1/auth/refresh
    ├─ Requires valid JWT in cookie
    └─ Issues new 24-hour token
 
-6. Logout
+8. Logout
    POST /api/v1/auth/logout
    └─ Clears cookie (maxAge=0)
 ```
@@ -851,7 +829,6 @@ Dashboard metrics are computed server-side in `DashboardService` and exposed via
 - `description`: max 255 characters
 - `targetAmount`: > 0
 - `deadline`: optional but must be future date if provided
-
 - `accountIds`: optional set of account UUIDs to link accounts to the goal (live saved amount is derived from linked accounts)
 
 ### Investment Checkpoint
