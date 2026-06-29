@@ -52,7 +52,12 @@ springdoc:
     operations-sorter: method
 
 vault:
+  allowed-origins:
+    - https://vault-frontend-lake.vercel.app
+    - http://localhost:3000
+    - https://laptopakis.tail2e7f53.ts.net
   auth:
+    jwt-secret: ${VAULT_JWT_SECRET:please-change-this-secret-to-something-long}
     jwt-expiry-hours: 24
     cookie-name: vault_token
   ai:

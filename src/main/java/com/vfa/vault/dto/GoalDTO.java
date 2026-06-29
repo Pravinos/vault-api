@@ -45,7 +45,7 @@ public class GoalDTO {
             GoalType goalType,
             LocalDate deadline,
             LocalDateTime createdAt,
-            Boolean isActive,
+            boolean isActive,
             double progressPercentage,
             long daysRemaining,
             boolean isOverdue,
@@ -59,5 +59,8 @@ public class GoalDTO {
             BigDecimal calculatedBalance
     ) {}
 
-        // ContributeRequest removed: contributions are derived from linked account balances now.
+    public record LinkAccountRequest(
+            @NotNull(message = "accountId is required")
+            UUID accountId
+    ) {}
 }

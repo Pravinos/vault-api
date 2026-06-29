@@ -99,7 +99,7 @@ class BudgetServiceTest {
         List<BudgetSummaryDTO> summary = budgetService.getBudgetSummary("2026-06");
 
         assertThat(summary).hasSize(1);
-        assertThat(summary.get(0).status()).isEqualTo(BudgetStatus.WARNING.name());
+        assertThat(summary.get(0).status()).isEqualTo(BudgetStatus.WARNING);
         assertThat(summary.get(0).percentageUsed()).isEqualTo(80.0);
     }
 
@@ -139,7 +139,7 @@ class BudgetServiceTest {
         List<BudgetSummaryDTO> alerts = budgetService.getBudgetAlerts("2026-06");
 
         assertThat(alerts).extracting(BudgetSummaryDTO::status)
-                .containsExactly(BudgetStatus.OVER_BUDGET.name(), BudgetStatus.WARNING.name());
+                .containsExactly(BudgetStatus.OVER_BUDGET, BudgetStatus.WARNING);
         assertThat(alerts).extracting(BudgetSummaryDTO::categoryName)
                 .containsExactly("Travel", "Dining");
     }

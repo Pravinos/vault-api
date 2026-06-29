@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.vfa.vault.config.CookieUtil;
 import com.vfa.vault.config.JwtUtil;
+import com.vfa.vault.dto.AuthDTO;
 import com.vfa.vault.entity.AppConfig;
 import com.vfa.vault.repository.AppConfigRepository;
 
@@ -53,7 +54,7 @@ public class AuthController {
     }
 
     @PostMapping("/setup")
-    public ResponseEntity<Map<String, String>> setup(@RequestBody PasswordRequest request,
+    public ResponseEntity<Map<String, String>> setup(@RequestBody AuthDTO.PasswordRequest request,
                                                      HttpServletRequest servletRequest,
                                                      HttpServletResponse response) {
         String password = request.password();
@@ -80,7 +81,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<Map<String, String>> login(@RequestBody PasswordRequest request,
+    public ResponseEntity<Map<String, String>> login(@RequestBody AuthDTO.PasswordRequest request,
                                                      HttpServletRequest servletRequest,
                                                      HttpServletResponse response) {
         Optional<AppConfig> passwordConfig = appConfigRepository.findById(PASSWORD_HASH_KEY);
@@ -104,7 +105,7 @@ public class AuthController {
     }
 
     @PostMapping("/reset-password")
-    public ResponseEntity<Map<String, String>> resetPassword(@RequestBody ResetPasswordRequest request,
+    public ResponseEntity<Map<String, String>> resetPassword(@RequestBody AuthDTO.ResetPasswordRequest request,
                                                              HttpServletRequest servletRequest,
                                                              HttpServletResponse response) {
         String newPassword = request.newPassword();
@@ -150,7 +151,7 @@ public class AuthController {
     }
 
     @PostMapping("/change-password")
-    public ResponseEntity<Map<String, String>> changePassword(@RequestBody ChangePasswordRequest request,
+    public ResponseEntity<Map<String, String>> changePassword(@RequestBody AuthDTO.ChangePasswordRequest request,
                                                               HttpServletRequest servletRequest,
                                                               HttpServletResponse response) {
         if (request.currentPassword() == null || request.newPassword() == null) {
@@ -217,14 +218,5 @@ public class AuthController {
         ResponseCookie cookie = cookieUtil.buildTokenCookie(token, servletRequest);
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
         return ResponseEntity.ok(Map.of("message", "Token refreshed"));
-    }
-
-    public record PasswordRequest(String password) {
-    }
-
-    public record ResetPasswordRequest(String newPassword) {
-    }
-
-    public record ChangePasswordRequest(String currentPassword, String newPassword) {
     }
 }

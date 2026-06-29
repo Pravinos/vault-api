@@ -84,8 +84,8 @@ public class BudgetService {
     @Transactional(readOnly = true)
     public List<BudgetSummaryDTO> getBudgetAlerts(String month) {
         return getBudgetSummary(month).stream()
-                .filter(b -> BudgetStatus.WARNING.name().equals(b.status())
-                        || BudgetStatus.OVER_BUDGET.name().equals(b.status()))
+                .filter(b -> b.status() == BudgetStatus.WARNING
+                        || b.status() == BudgetStatus.OVER_BUDGET)
                 .toList();
     }
 
@@ -105,7 +105,7 @@ public class BudgetService {
         BigDecimal budgetAmount = budget.getAmount();
         BigDecimal remainingAmount = budgetAmount.subtract(spentAmount);
         double percentageUsed = calculatePercentageUsed(budgetAmount, spentAmount);
-        String status = resolveStatus(budgetAmount, spentAmount).name();
+        BudgetStatus status = resolveStatus(budgetAmount, spentAmount);
 
         return new BudgetSummaryDTO(
                 category.getId(),

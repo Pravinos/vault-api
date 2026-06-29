@@ -10,5 +10,5 @@ public record BudgetSummaryDTO(
         BigDecimal spentAmount,
         BigDecimal remainingAmount,
         double percentageUsed,
-        String status
+        BudgetStatus status
 ) {}

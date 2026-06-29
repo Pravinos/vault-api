@@ -1,5 +1,7 @@
 package com.vfa.vault.controller;
 
+import java.util.UUID;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -29,7 +31,7 @@ public class TransferController {
     }
 
     @PostMapping("/{id}/revert")
-    public ResponseEntity<TransferResponseDTO> revertTransfer(@PathVariable("id") java.util.UUID id) {
+    public ResponseEntity<TransferResponseDTO> revertTransfer(@PathVariable UUID id) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(transferService.revertTransfer(id));
     }

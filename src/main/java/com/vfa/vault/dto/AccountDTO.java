@@ -22,8 +22,11 @@ public class AccountDTO {
             @NotNull(message = "Opening balance is required")
             @DecimalMin(value = "0.00", message = "Opening balance must be >= 0")
             BigDecimal openingBalance,
+            @Size(max = 100, message = "Platform must be under 100 characters")
             String platform,
+            @Size(max = 100, message = "Instrument must be under 100 characters")
             String instrument,
+            @Size(max = 50, message = "Asset type must be under 50 characters")
             String assetType
     ) {}
 

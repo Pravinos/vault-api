@@ -24,6 +24,8 @@ public class SecurityConfig {
 
     private final RateLimitFilter rateLimitFilter;
     private final JwtFilter jwtFilter;
+    private final VaultCorsProperties corsProperties;
+    private final JsonAuthenticationEntryPoint authenticationEntryPoint;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -34,11 +36,13 @@ public class SecurityConfig {
                 .formLogin(form -> form.disable())
                 .logout(logout -> logout.disable())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(ex -> ex.authenticationEntryPoint(authenticationEntryPoint))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.GET, "/api/v1/auth/status").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/setup").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/login").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/reset-password").permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers(HttpMethod.GET, PublicApiPaths.AUTH_STATUS).permitAll()
+                        .requestMatchers(HttpMethod.POST, PublicApiPaths.AUTH_SETUP).permitAll()
+                        .requestMatchers(HttpMethod.POST, PublicApiPaths.AUTH_LOGIN).permitAll()
+                        .requestMatchers(HttpMethod.POST, PublicApiPaths.AUTH_RESET_PASSWORD).permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
@@ -49,11 +53,7 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of(
-            "https://vault-frontend-lake.vercel.app",
-            "http://localhost:3000",
-            "https://laptopakis.tail2e7f53.ts.net"
-        ));
+        config.setAllowedOrigins(corsProperties.getAllowedOrigins());
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);

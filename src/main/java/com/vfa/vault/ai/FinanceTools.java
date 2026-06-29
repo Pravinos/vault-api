@@ -30,7 +30,7 @@ public class FinanceTools {
         private final DashboardService dashboardService;
     private final GoalService goalService;
 
-    public record BudgetStatus(
+    public record MonthlyBudgetComparison(
             String currentMonth,
             double currentMonthTotal,
             String previousMonth,
@@ -74,7 +74,7 @@ public class FinanceTools {
     }
 
     @Tool(description = "Get the current month's total spending and how it compares to the previous month")
-    public BudgetStatus getBudgetStatus() {
+    public MonthlyBudgetComparison getBudgetStatus() {
         DashboardResponseDTO dashboard = dashboardService.getDashboard();
         YearMonth prev = YearMonth.now().minusMonths(1);
         String thisMonth = MonthParser.currentMonth();
@@ -92,7 +92,7 @@ public class FinanceTools {
                 ? Math.round((change / lastTotal.doubleValue()) * 10000.0) / 100.0
                 : 0.0;
 
-        return new BudgetStatus(thisMonth, thisTotal.doubleValue(),
+        return new MonthlyBudgetComparison(thisMonth, thisTotal.doubleValue(),
                 lastMonth, lastTotal.doubleValue(), change, changePct);
     }
 

@@ -44,7 +44,7 @@ public class AiController {
     private final ObjectMapper objectMapper;
 
     @PostMapping("/chat")
-    public ResponseEntity<ChatResponseDTO> chat(@RequestBody ChatRequestDTO request) {
+    public ResponseEntity<ChatResponseDTO> chat(@Valid @RequestBody ChatRequestDTO request) {
         ChatClient chatClient = llmProviderRouter.getClientForTask(LlmProviderRouter.TaskType.CHAT);
         LlmProviderConfig config = configRepository.getConfig();
 
