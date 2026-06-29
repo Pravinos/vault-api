@@ -17,7 +17,7 @@ Vault is a personal finance API protected by a single vault password with JWT-ba
 - **Investment Accounts** – optional metadata with checkpoint-based return tracking
 - **Financial Goals** – lifecycle management (create, update, deactivate) with account-linked live progress
 - **Unified Dashboard API** – `GET /api/v1/dashboard` returns pre-calculated dashboard metrics, including budget alerts for the current month
-- **Summaries & Analytics** – monthly and weekly summaries with aggregate analytics
+- **Summaries & Analytics** – monthly and weekly summaries with aggregate analytics; weekly AI summaries auto-generated every Monday at 08:00
 - **AI Assistant** – chat over real finance data with tool-calling capabilities
 - **LLM Routing** – per-task provider/model selection (Groq, OpenAI, LM Studio)
 - **Model Discovery** – live LM Studio and Groq model list endpoints
@@ -52,7 +52,7 @@ Use a single centralized properties file that Spring can parse directly. Copy th
 
 ```powershell
 Copy-Item .env.properties.example .env.properties
-# edit .env.properties to set DB_USERNAME, DB_PASSWORD and other values
+# edit .env.properties to set DEV_DB_* / PROD_DB_* credentials and other values
 ```
 
 Example properties you must set:
@@ -61,17 +61,26 @@ Example properties you must set:
 # Active profile: dev or prod
 SPRING_PROFILES_ACTIVE=dev
 
-# Database
-DB_USERNAME=postgres.your_db_username
-DB_PASSWORD=your_postgres_password
+# Database (profile-specific)
+DEV_DB_USERNAME=postgres.your-dev-project-ref
+DEV_DB_PASSWORD=your_dev_password
+PROD_DB_USERNAME=postgres.your-prod-project-ref
+PROD_DB_PASSWORD=your_prod_password
 
 # App secrets
 VAULT_JWT_SECRET=your-long-random-secret-min-32-chars
+
+# CORS (merged with vault.allowed-origins in application.yaml)
 FRONTEND_URL=http://localhost:3000
+DEV_FRONTEND_URL=http://localhost:3000
 
 # AI providers (optional)
 GROQ_API_KEY=your_groq_api_key
 OPENAI_API_KEY=your_openai_api_key
+
+# Password reset (optional — required for /auth/reset-password)
+PASSWORD_RESET_TOKEN=your-reset-token
+API_ADMIN_TOKEN=your-admin-token
 ```
 
 **Important:** `VAULT_JWT_SECRET` must be at least 32 characters of random data (use `openssl rand -base64 32` to generate).
@@ -132,7 +141,7 @@ The application supports two profiles for different environments:
 On first run, the vault is unconfigured. Use the frontend to:
 
 1. Check `/api/v1/auth/status` → returns `{"configured": false}`
-2. Call `/api/v1/auth/setup` with your chosen password (min 8 chars)
+2. Call `/api/v1/auth/setup` with your chosen password (min 6 chars)
 3. Password is hashed with BCrypt and stored in the database
 4. Receive a JWT token in an HttpOnly cookie
 5. All subsequent requests include the cookie automatically
@@ -140,24 +149,28 @@ On first run, the vault is unconfigured. Use the frontend to:
 ### Configuration
 
 - **Spring Profiles** → `application.yaml`, `application-dev.yaml`, `application-prod.yaml`
-- **Environment Variables** → `SPRING_PROFILES_ACTIVE`, `DB_PASSWORD`, `VAULT_JWT_SECRET`, `FRONTEND_URL`
+- **Environment Variables** → `SPRING_PROFILES_ACTIVE`, `DEV_DB_*` / `PROD_DB_*`, `VAULT_JWT_SECRET`, `DEV_FRONTEND_URL` / `FRONTEND_URL`, optional `PASSWORD_RESET_TOKEN` / `API_ADMIN_TOKEN`
 - **.env import** → Loaded via Spring's `spring.config.import` (optional in prod if using env vars)
-- **Flyway migrations** → Auto-run on startup in prod profile with validation
-- **Auth config** → `vault.auth.*` in YAML (JWT secret, cookie settings, CORS frontend URL)
+- **Flyway migrations** → Auto-run on startup with validation
+- **CORS** → `vault.allowed-origins` list in `application.yaml`, plus `vault.frontend-url` per profile (merged at startup by `VaultCorsProperties`)
+- **Auth config** → `vault.auth.*` in YAML (`jwt-secret`, `jwt-expiry-hours`, `cookie-name`, `cookie-secure`, `cookie-same-site`)
+- **Actuator** → `/actuator/health` and `/actuator/info` are public
+- **OpenAPI** → Swagger UI at `/swagger-ui`, API docs at `/api-docs`
 
 ## Project Structure
 
 ```
 src/main/java/com/vfa/vault/
 ├── VaultApplication.java          # Spring Boot entry point
-├── WebConfig.java                 # CORS & web configuration
+├── WebConfig.java                 # Jackson ObjectMapper bean
 ├── ai/                            # AI integration layer
 │   ├── AiConfig.java
 │   ├── FinanceTools.java
 │   ├── LlmProviderRouter.java
-│   └── ModelDiscoveryService.java
+│   ├── ModelDiscoveryService.java
+│   └── WeeklyDataSnapshot.java    # Snapshot DTO for weekly summary generation
 ├── controller/                    # REST API endpoints
-│   ├── AuthController.java        # /api/v1/auth/* (setup, login, verify, refresh, logout, status)
+│   ├── AuthController.java        # /api/v1/auth/* (setup, login, reset, change, verify, refresh, logout, status)
 │   ├── AccountController.java
 │   ├── AiController.java
 │   ├── BudgetController.java
@@ -174,16 +187,20 @@ src/main/java/com/vfa/vault/
 │   ├── AccountBalanceService.java
 │   ├── BudgetService.java
 │   ├── CategoryService.java
+│   ├── DashboardService.java
 │   ├── ExpenseService.java
 │   ├── GoalService.java
 │   ├── IncomeCategoryService.java
 │   ├── IncomeService.java
+│   ├── InvestmentBalanceService.java  # Investment current value & return calculations
 │   ├── InvestmentCheckpointService.java
-│   ├── DashboardService.java
 │   ├── TransferService.java
 │   └── WeeklySummaryService.java
+├── scheduler/                     # Background jobs
+│   └── WeeklySummaryScheduler.java    # Cron: Monday 08:00 — auto-generates weekly AI summary
 ├── repository/                    # JPA data access
 │   ├── AccountRepository.java
+│   ├── AppConfigRepository.java
 │   ├── BudgetRepository.java
 │   ├── CategoryRepository.java
 │   ├── ExpenseRepository.java
@@ -194,7 +211,15 @@ src/main/java/com/vfa/vault/
 │   ├── InvestmentDetailRepository.java
 │   ├── LlmProviderConfigRepository.java
 │   ├── TransferRepository.java
-│   └── WeeklySummaryRepository.java
+│   ├── WeeklySummaryRepository.java
+│   └── projection/                # Spring Data interface projections for aggregate queries
+│       ├── AccountIdAmountProjection.java
+│       ├── CategoryAmountProjection.java
+│       ├── CategoryIdAmountProjection.java
+│       ├── DayAmountProjection.java
+│       ├── ExpenseDateAmountProjection.java
+│       ├── MonthAmountProjection.java
+│       └── TopCategoryProjection.java
 ├── entity/                        # JPA entity models
 │   ├── Account.java
 │   ├── AccountType.java           # Enum: CHECKING, SAVINGS, INVESTMENT
@@ -203,6 +228,7 @@ src/main/java/com/vfa/vault/
 │   ├── Category.java
 │   ├── Expense.java
 │   ├── Goal.java
+│   ├── GoalType.java              # Enum: SHORT_TERM, LONG_TERM
 │   ├── Income.java
 │   ├── IncomeCategory.java
 │   ├── InvestmentCheckpoint.java
@@ -211,38 +237,50 @@ src/main/java/com/vfa/vault/
 │   ├── Transfer.java
 │   └── WeeklySummary.java
 ├── config/                        # Auth, security, and utility beans
-│   ├── SecurityConfig.java        # Spring Security filter chain, CORS
+│   ├── SecurityConfig.java        # Spring Security filter chain & CORS
+│   ├── PublicApiPaths.java        # Centralized public auth path constants (JWT skip + rate limit)
+│   ├── JsonAuthenticationEntryPoint.java  # JSON 401 responses for unauthenticated requests
+│   ├── VaultCorsProperties.java   # vault.allowed-origins + frontend-url merge
+│   ├── DevHibernateConfig.java    # Dev profile: maps PostgreSQL enums to VARCHAR
 │   ├── JwtUtil.java               # JWT generation and validation
-│   ├── JwtFilter.java             # Extracts JWT from cookie, sets SecurityContext
+│   ├── JwtFilter.java             # Extracts JWT from cookie or Bearer header
 │   ├── RateLimitFilter.java       # Rate limiting: 5 attempts per 15 min per IP
 │   └── CookieUtil.java            # Builds/clears HttpOnly cookies with SameSite policy
 ├── dto/                           # Request/Response contracts
 │   ├── AccountDTO.java
+│   ├── AccountDashboardDTO.java
 │   ├── AiConfigResponseDTO.java
-│   ├── BudgetDTO.java
-│   ├── BudgetSummaryDTO.java
 │   ├── AiConfigUpdateDTO.java
+│   ├── AuthDTO.java               # Nested records: PasswordRequest, ResetPasswordRequest, ChangePasswordRequest
+│   ├── BudgetDTO.java
+│   ├── BudgetStatus.java          # Enum: ON_TRACK, WARNING, OVER_BUDGET
+│   ├── BudgetSummaryDTO.java
 │   ├── CategoryDTO.java
 │   ├── ChatRequestDTO.java
 │   ├── ChatResponseDTO.java
+│   ├── DashboardResponseDTO.java
 │   ├── ExpenseDTO.java
 │   ├── ExpenseHeatmapDTO.java
 │   ├── GoalDTO.java
 │   ├── IncomeCategoryDTO.java
 │   ├── IncomeDTO.java
 │   ├── InvestmentCheckpointDTO.java
-│   ├── AccountDashboardDTO.java
-│   ├── DashboardResponseDTO.java
 │   ├── TransferDTO.java
 │   ├── TransferResponseDTO.java
-│   └── WeeklySummaryDTO.java
+│   ├── WeeklySummaryDTO.java
+│   └── WeeklySummaryResponseDTO.java
+├── util/                          # Shared helpers
+│   └── MonthParser.java           # YYYY-MM month parsing/formatting (budgets, expenses, income)
 └── exception/                     # Error handling
     ├── GlobalExceptionHandler.java
+    ├── LlmServiceUnavailableException.java
     └── ResourceNotFoundException.java
 
 src/main/resources/
-├── application.yaml               # Spring Boot configuration
-├── db/migration/                  # Flyway SQL migrations (22 versions)
+├── application.yaml               # Spring Boot configuration (CORS origins, AI, auth defaults)
+├── application-dev.yaml           # Dev DB, cookie-secure=false
+├── application-prod.yaml          # Prod DB, cookie-secure=true
+├── db/migration/                  # Flyway SQL migrations (23 versions)
 │   ├── V1__create_categories.sql
 │   ├── V2__create_expenses.sql
 │   ├── V3__create_goals.sql
@@ -264,7 +302,8 @@ src/main/resources/
 │   ├── V19__expand_categories.sql
 │   ├── V20__add_goal_accounts.sql
 │   ├── V21__add_food_drink_categories.sql
-│   └── V22__create_budgets.sql
+│   ├── V22__create_budgets.sql
+│   └── V23__add_expense_account_index.sql
 └── templates/                     # Static resources
 ```
 
@@ -274,7 +313,7 @@ src/main/resources/
 
 Vault uses a **single shared password** to protect all data. There is no user registration or multi-user support:
 
-- **First-time setup**: Call `/api/v1/auth/setup` with your chosen password (min 8 chars)
+- **First-time setup**: Call `/api/v1/auth/setup` with your chosen password (min 6 chars)
 - **Password hashing**: BCrypt with automatic salt generation
 - **JWT tokens**: 24-hour expiry, signed with HMAC SHA-256
 - **Storage**: JWT is stored in an **HttpOnly cookie** (not accessible to JavaScript)
@@ -289,7 +328,7 @@ Vault uses a **single shared password** to protect all data. There is no user re
 
 2. Setup (first time)
    POST /api/v1/auth/setup { password: "my-password" }
-   ├─ Password hashed with BCrypt
+   ├─ Password hashed with BCrypt (min 6 chars)
    ├─ Hash stored in app_config table
    └─ Returns Set-Cookie with JWT
 
@@ -301,22 +340,22 @@ Vault uses a **single shared password** to protect all data. There is no user re
 
 4. Password Reset (forgotten password)
   POST /api/v1/auth/reset-password { newPassword: "new-pass" }
-  ├─ Unauthenticated recovery endpoint — the frontend proxy must validate a `PASSWORD_RESET_TOKEN` before calling this endpoint
-  ├─ Validates `newPassword` (min 8 chars), overwrites stored BCrypt hash, issues a fresh JWT and sets the cookie
+  ├─ Public endpoint — requires `Authorization: Bearer <API_ADMIN_TOKEN>` or `x-reset-token: <PASSWORD_RESET_TOKEN>` header
+  ├─ Validates `newPassword` (min 6 chars), overwrites stored BCrypt hash, issues a fresh JWT and sets the cookie
   └─ Rate limited: 5 attempts per 15 minutes per IP
 
 5. Change Password (authenticated)
   POST /api/v1/auth/change-password { currentPassword: "old", newPassword: "new" }
   ├─ Requires a valid JWT (HttpOnly cookie or `Authorization: Bearer <token>` header)
-  ├─ Verifies `currentPassword` against the stored hash, validates `newPassword` (min 8 chars and different), overwrites the hash, and issues a fresh JWT
+  ├─ Verifies `currentPassword` against the stored hash, validates `newPassword` (min 6 chars and different), overwrites the hash, and issues a fresh JWT
   └─ Rate limited: 5 attempts per 15 minutes per IP
 
 6. Authenticated requests
    GET /api/v1/expenses
-   ├─ Browser automatically includes cookie
-   ├─ JwtFilter extracts token from cookie
+   ├─ Browser automatically includes cookie (or send `Authorization: Bearer <token>`)
+   ├─ JwtFilter extracts token from cookie or Bearer header
    ├─ Validates JWT signature and expiry
-   └─ If valid, request proceeds; if expired, return 401
+   └─ If valid, request proceeds; if missing/invalid, JsonAuthenticationEntryPoint returns 401 JSON
 
 7. Refresh
    POST /api/v1/auth/refresh
@@ -327,6 +366,8 @@ Vault uses a **single shared password** to protect all data. There is no user re
    POST /api/v1/auth/logout
    └─ Clears cookie (maxAge=0)
 ```
+
+Public auth paths are centralized in `PublicApiPaths` — used by `SecurityConfig`, `JwtFilter`, and `RateLimitFilter` to stay in sync.
 
 ### Rate Limiting
 
@@ -343,9 +384,9 @@ Vault uses a **single shared password** to protect all data. There is no user re
 - `VAULT_COOKIE_FORCE_SECURE=true` can be used to force Secure=true even on HTTP (not recommended)
 
 **For production (Render backend + Vercel frontend):**
-- `VAULT_COOKIE_SECURE=true` (cookies only sent over HTTPS)
-- `VAULT_COOKIE_SAME_SITE=None` (cookies sent in cross-origin requests from Vercel)
-- `FRONTEND_URL=https://your-app.vercel.app` (CORS origin)
+- `vault.auth.cookie-secure=true` in `application-prod.yaml` (cookies only sent over HTTPS)
+- `vault.auth.cookie-same-site=None` (cookies sent in cross-origin requests from Vercel)
+- Add your frontend origin to `vault.allowed-origins` in `application.yaml` and/or set `FRONTEND_URL` (prod) / `DEV_FRONTEND_URL` (dev)
 - `VAULT_JWT_SECRET` must be a random 32+ character string
 
 ## Database Schema
@@ -381,7 +422,7 @@ Vault uses a **single shared password** to protect all data. There is no user re
 | `expense_date` | DATE | NOT NULL, DEFAULT CURRENT_DATE |
 | `created_at` | TIMESTAMP | NOT NULL, DEFAULT NOW() |
 
-*Indexes: `idx_expenses_date`, `idx_expenses_category`*
+*Indexes: `idx_expenses_date`, `idx_expenses_category`, `idx_expenses_account` (added in [V23__add_expense_account_index.sql](src/main/resources/db/migration/V23__add_expense_account_index.sql))*
 
 ### Budgets
 
@@ -534,9 +575,9 @@ CREATE TABLE goal_accounts (
 
 **Base Path:** `/api/v1`
 
-**Authentication:** All endpoints except `/auth/status`, `/auth/setup`, and `/auth/login` require a valid JWT in an HttpOnly cookie.
+**Authentication:** All endpoints except `/auth/status`, `/auth/setup`, `/auth/login`, and `/auth/reset-password` require a valid JWT in an HttpOnly cookie or `Authorization: Bearer` header.
 
-**CORS:** Configured to allow the frontend URL specified in `FRONTEND_URL` environment variable with credentials (`allowCredentials=true`).
+**CORS:** Allowed origins come from `vault.allowed-origins` in `application.yaml`, merged with `vault.frontend-url` from the active profile (`DEV_FRONTEND_URL` in dev, `FRONTEND_URL` in prod). Credentials are enabled (`allowCredentials=true`).
 
 ### Authentication
 
@@ -545,11 +586,13 @@ CREATE TABLE goal_accounts (
 | GET | `/auth/status` | Check if vault is configured | Yes |
 | POST | `/auth/setup` | Configure vault with password (first-time only) | Yes* |
 | POST | `/auth/login` | Authenticate with vault password | Yes* |
+| POST | `/auth/reset-password` | Reset vault password (requires admin/reset token header) | Yes* |
+| POST | `/auth/change-password` | Change password while authenticated | No* |
 | GET | `/auth/verify` | Verify JWT is valid (heartbeat) | No |
 | POST | `/auth/refresh` | Issue new JWT token | No |
 | POST | `/auth/logout` | Clear authentication cookie | No |
 
-*Rate limited: 5 attempts per 15 minutes per IP
+*Rate limited: 5 attempts per 15 minutes per IP (setup, login, reset-password, change-password)
 
 **GET /auth/status — response:**
 ```json
@@ -610,6 +653,23 @@ CREATE TABLE goal_accounts (
 }
 ```
 *Clears authentication cookie*
+
+**POST /auth/reset-password — request:**
+```json
+{
+  "newPassword": "my-new-password"
+}
+```
+*Requires `Authorization: Bearer <API_ADMIN_TOKEN>` or `x-reset-token: <PASSWORD_RESET_TOKEN>`. Sets cookie with fresh JWT on success.*
+
+**POST /auth/change-password — request:**
+```json
+{
+  "currentPassword": "old-password",
+  "newPassword": "new-password"
+}
+```
+*Requires valid JWT. Sets cookie with fresh JWT on success.*
 
 ### Categories
 
@@ -759,8 +819,10 @@ CREATE TABLE goal_accounts (
 - `Chat` and `Summary` can each use independent provider/model combinations.
 - Providers currently supported: `lmstudio`, `groq`.
 - Chat requests support optional `conversationId` for memory continuity.
+- Weekly summary generation runs automatically every Monday at 08:00 via `WeeklySummaryScheduler`, and can also be triggered manually from the API.
 - Weekly summary generation logs each step and returns readable error payloads on failure.
 - Model discovery responses are cached in `llm_provider_config`.
+- `WeeklyDataSnapshot` aggregates week-over-week finance data for summary prompts.
 - `FinanceTools.getDashboardSummary()` uses `DashboardService.getDashboard()` so AI and dashboard use identical calculations (including `budgetAlerts` for categories at WARNING or OVER_BUDGET).
 - `FinanceTools.getGoalProgress()` returns live goal progress derived from linked account balances, includes `isOverdue`, and a summary of linked accounts contributing to each goal.
 
@@ -772,7 +834,7 @@ $$\text{Calculated Balance} = \text{Opening Balance} + \text{Total Income} - \te
 
 ### Investment Account Fields
 
-For **INVESTMENT** type accounts, the following derived fields are included:
+For **INVESTMENT** type accounts, the following derived fields are included (computed in `InvestmentBalanceService`):
 
 | Field | Calculation |
 |-------|-------------|
@@ -864,9 +926,12 @@ For validation failures, a map of field-to-message is returned:
 
 | Status | Description |
 |--------|-------------|
-| `400` | Bad Request — validation failure or invalid operation |
+| `400` | Bad Request — validation failure, malformed JSON, or invalid operation |
+| `401` | Unauthorized — missing or invalid JWT (`JsonAuthenticationEntryPoint`) |
 | `404` | Not Found — resource does not exist |
+| `429` | Too Many Requests — auth rate limit exceeded |
 | `500` | Internal Server Error — unexpected error |
+| `503` | Service Unavailable — LLM provider unreachable (`LlmServiceUnavailableException`) |
 
 ## Security
 
@@ -874,17 +939,17 @@ For validation failures, a map of field-to-message is returned:
 
 - **JWT Secret** (`VAULT_JWT_SECRET`): Must be at least 32 random characters. Generate with `openssl rand -base64 32`. Never hardcode or commit this value.
 - **Cookie Security**: In production, always set `VAULT_COOKIE_SECURE=true` to ensure cookies are only sent over HTTPS.
-- **Password Policy**: Minimum 8 characters enforced. Consider prompting users for stronger passwords (12+ chars, mixed case, symbols).
+- **Password Policy**: Minimum 6 characters enforced at the API layer.
 - **Rate Limiting**: Protect `/setup` and `/login` from brute-force attacks (default: 5 attempts per 15 minutes per IP).
 - **HTTPS Only**: Deploy on HTTPS (Render and Vercel both enforce this). JWT tokens in cookies require HTTPS + Secure flag.
 - **Environment Variables**: Never commit `.env` files. Use your platform's secret management (Render environment variables, Vercel secrets).
-- **CORS Configuration**: Only allow your frontend domain. Adjust `FRONTEND_URL` per deployment environment.
+- **CORS Configuration**: Allowed origins are defined in `vault.allowed-origins` and merged with the profile-specific `vault.frontend-url`. Add your deployment domain before going live.
 
 **Deployment checklist:**
 - [ ] `VAULT_JWT_SECRET` is 32+ random characters
-- [ ] `VAULT_COOKIE_SECURE=true` on production
-- [ ] `VAULT_COOKIE_SAME_SITE=None` if frontend is cross-origin
-- [ ] `FRONTEND_URL` matches your frontend deployment domain
+- [ ] `vault.auth.cookie-secure=true` on production profile
+- [ ] `vault.auth.cookie-same-site=None` if frontend is cross-origin
+- [ ] Frontend origin listed in `vault.allowed-origins` and/or set via `FRONTEND_URL`
 - [ ] HTTPS is enforced (both backend and frontend)
 - [ ] Database backups enabled (Supabase settings)
 - [ ] No console.log() statements exposing sensitive data in frontend code
