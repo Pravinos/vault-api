@@ -15,11 +15,9 @@ import com.vfa.vault.dto.TransferDTO;
 import com.vfa.vault.dto.TransferResponseDTO;
 import com.vfa.vault.entity.Account;
 import com.vfa.vault.entity.AccountType;
-import com.vfa.vault.entity.InvestmentCheckpoint;
 import com.vfa.vault.entity.Transfer;
 import com.vfa.vault.exception.ResourceNotFoundException;
 import com.vfa.vault.repository.AccountRepository;
-import com.vfa.vault.repository.InvestmentCheckpointRepository;
 import com.vfa.vault.repository.TransferRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -33,7 +31,7 @@ public class TransferService {
     private final TransferRepository transferRepository;
     private final AccountRepository accountRepository;
     private final AccountBalanceService accountBalanceService;
-    private final InvestmentCheckpointRepository investmentCheckpointRepository;
+    private final InvestmentBalanceService investmentBalanceService;
 
     @Transactional
     public TransferResponseDTO createTransfer(TransferDTO dto) {
@@ -130,15 +128,7 @@ public class TransferService {
             return;
         }
 
-        BigDecimal base = account.getManualBalance();
-        if (base == null) {
-            base = investmentCheckpointRepository
-                    .findTopByAccountIdOrderByRecordedAtDesc(account.getId())
-                    .map(InvestmentCheckpoint::getValue)
-                    .orElse(account.getOpeningBalance() != null ? account.getOpeningBalance() : BigDecimal.ZERO);
-        }
-
-        BigDecimal updated = base.add(delta);
+        BigDecimal updated = investmentBalanceService.resolveSnapshotBase(account).add(delta);
         account.setManualBalance(updated);
         account.setManualBalanceUpdatedAt(LocalDateTime.now());
         accountRepository.save(account);

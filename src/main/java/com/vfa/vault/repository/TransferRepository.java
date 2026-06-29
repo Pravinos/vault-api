@@ -1,6 +1,7 @@
 package com.vfa.vault.repository;
 
 import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -12,6 +13,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import com.vfa.vault.entity.Transfer;
+import com.vfa.vault.repository.projection.AccountIdAmountProjection;
 
 @Repository
 public interface TransferRepository extends JpaRepository<Transfer, UUID> {
@@ -54,4 +56,30 @@ public interface TransferRepository extends JpaRepository<Transfer, UUID> {
               )
             """)
     BigDecimal sumIncomingByAccountId(@Param("accountId") UUID accountId);
+
+    @Query("""
+            SELECT t.fromAccount.id AS accountId, COALESCE(SUM(t.amount), 0) AS total
+            FROM Transfer t
+            WHERE t.fromAccount.id IN :accountIds
+              AND t.isReversal = false
+              AND NOT EXISTS (
+                  SELECT 1 FROM Transfer r
+                  WHERE r.originalTransfer.id = t.id
+              )
+            GROUP BY t.fromAccount.id
+            """)
+    List<AccountIdAmountProjection> sumOutgoingByAccountIds(@Param("accountIds") Collection<UUID> accountIds);
+
+    @Query("""
+            SELECT t.toAccount.id AS accountId, COALESCE(SUM(t.amount), 0) AS total
+            FROM Transfer t
+            WHERE t.toAccount.id IN :accountIds
+              AND t.isReversal = false
+              AND NOT EXISTS (
+                  SELECT 1 FROM Transfer r
+                  WHERE r.originalTransfer.id = t.id
+              )
+            GROUP BY t.toAccount.id
+            """)
+    List<AccountIdAmountProjection> sumIncomingByAccountIds(@Param("accountIds") Collection<UUID> accountIds);
 }

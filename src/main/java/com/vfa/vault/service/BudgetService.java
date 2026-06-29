@@ -3,9 +3,7 @@ package com.vfa.vault.service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
-import java.time.YearMonth;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
+import com.vfa.vault.util.MonthParser;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -32,7 +30,6 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class BudgetService {
 
-    private static final DateTimeFormatter MONTH_FMT = DateTimeFormatter.ofPattern("yyyy-MM");
     private static final BigDecimal WARNING_THRESHOLD = new BigDecimal("0.80");
 
     private final BudgetRepository budgetRepository;
@@ -149,22 +146,11 @@ public class BudgetService {
                 category.getId(),
                 category.getName(),
                 category.getIcon(),
-                formatMonth(budget.getMonth()),
+                MonthParser.formatMonth(budget.getMonth()),
                 budget.getAmount());
     }
 
     private LocalDate parseMonth(String month) {
-        if (month == null || month.isBlank()) {
-            throw new IllegalArgumentException("Month must be in YYYY-MM format");
-        }
-        try {
-            return YearMonth.parse(month.trim(), MONTH_FMT).atDay(1);
-        } catch (DateTimeParseException ex) {
-            throw new IllegalArgumentException("Month must be in YYYY-MM format");
-        }
-    }
-
-    private String formatMonth(LocalDate month) {
-        return YearMonth.from(month).format(MONTH_FMT);
+        return MonthParser.parseMonthStart(month);
     }
 }

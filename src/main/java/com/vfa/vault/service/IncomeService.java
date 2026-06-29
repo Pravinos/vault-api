@@ -2,8 +2,6 @@ package com.vfa.vault.service;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.YearMonth;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -19,6 +17,7 @@ import com.vfa.vault.repository.AccountRepository;
 import com.vfa.vault.repository.IncomeCategoryRepository;
 import com.vfa.vault.repository.IncomeRepository;
 import com.vfa.vault.repository.projection.CategoryAmountProjection;
+import com.vfa.vault.util.MonthParser;
 
 import lombok.RequiredArgsConstructor;
 
@@ -30,13 +29,11 @@ public class IncomeService {
     private final IncomeCategoryRepository incomeCategoryRepository;
     private final AccountRepository accountRepository;
 
-    private static final DateTimeFormatter MONTH_FMT = DateTimeFormatter.ofPattern("yyyy-MM");
-
     @Transactional(readOnly = true)
     public List<IncomeDTO.Response> getIncome(String month, UUID accountId) {
         List<Income> incomes;
         if (month != null) {
-            YearMonth ym = YearMonth.parse(month, MONTH_FMT);
+            var ym = MonthParser.parseYearMonth(month);
             LocalDate start = ym.atDay(1);
             LocalDate end = ym.atEndOfMonth();
             if (accountId != null) {
@@ -99,8 +96,8 @@ public class IncomeService {
 
     @Transactional(readOnly = true)
     public Map<String, BigDecimal> getMonthlySummary(String month) {
-        final String resolvedMonth = month != null ? month : YearMonth.now().format(MONTH_FMT);
-        YearMonth ym = YearMonth.parse(resolvedMonth, MONTH_FMT);
+        final String resolvedMonth = month != null ? month : MonthParser.currentMonth();
+        var ym = MonthParser.parseYearMonth(resolvedMonth);
         return incomeRepository.sumByCategoryForDateRange(ym.atDay(1), ym.atEndOfMonth()).stream()
                 .collect(Collectors.toMap(
                         CategoryAmountProjection::getName,

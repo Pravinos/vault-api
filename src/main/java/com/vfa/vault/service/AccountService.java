@@ -1,10 +1,12 @@
 package com.vfa.vault.service;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -13,12 +15,11 @@ import org.springframework.transaction.annotation.Transactional;
 import com.vfa.vault.dto.AccountDTO;
 import com.vfa.vault.entity.Account;
 import com.vfa.vault.entity.AccountType;
-import com.vfa.vault.entity.InvestmentCheckpoint;
 import com.vfa.vault.entity.InvestmentDetail;
 import com.vfa.vault.exception.ResourceNotFoundException;
 import com.vfa.vault.repository.AccountRepository;
-import com.vfa.vault.repository.InvestmentCheckpointRepository;
 import com.vfa.vault.repository.InvestmentDetailRepository;
+import com.vfa.vault.service.AccountBalanceService.BalanceBreakdown;
 
 import lombok.RequiredArgsConstructor;
 
@@ -28,13 +29,15 @@ public class AccountService {
 
     private final AccountRepository accountRepository;
     private final InvestmentDetailRepository investmentDetailRepository;
-    private final InvestmentCheckpointRepository investmentCheckpointRepository;
     private final AccountBalanceService accountBalanceService;
+    private final InvestmentBalanceService investmentBalanceService;
 
     @Transactional(readOnly = true)
     public List<AccountDTO.Response> getAllAccounts() {
-        return accountRepository.findAllOrderByLastUpdatedDesc().stream()
-                .map(this::buildResponse)
+        List<Account> accounts = accountRepository.findAllOrderByLastUpdatedDesc();
+        AccountViewContext context = loadViewContext(accounts);
+        return accounts.stream()
+                .map(account -> buildResponse(account, context))
                 .toList();
     }
 
@@ -42,7 +45,7 @@ public class AccountService {
     public AccountDTO.Response getAccountById(UUID id) {
         Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", id));
-        return buildResponse(account);
+        return buildResponse(account, loadViewContext(List.of(account)));
     }
 
     @Transactional
@@ -52,7 +55,6 @@ public class AccountService {
         account.setAccountType(dto.accountType());
         account.setOpeningBalance(dto.openingBalance());
 
-        // If an opening balance is provided, use it as the initial manual balance too
         if (dto.openingBalance().compareTo(BigDecimal.ZERO) > 0) {
             account.setManualBalance(dto.openingBalance());
             account.setManualBalanceUpdatedAt(LocalDateTime.now());
@@ -70,7 +72,7 @@ public class AccountService {
             investmentDetailRepository.save(detail);
         }
 
-        return buildResponse(account);
+        return buildResponse(account, loadViewContext(List.of(account)));
     }
 
     @Transactional
@@ -92,30 +94,25 @@ public class AccountService {
             detail.setAssetType(dto.assetType());
             investmentDetailRepository.save(detail);
         } else {
-            // Clean up orphaned InvestmentDetail if type changed away from INVESTMENT
             investmentDetailRepository.findByAccountId(account.getId())
                     .ifPresent(investmentDetailRepository::delete);
         }
 
-        return buildResponse(account);
+        return buildResponse(account, loadViewContext(List.of(account)));
     }
 
     @Transactional
     public void deleteAccount(UUID id) {
-        // DELETE is idempotent: deleting an already missing account is a no-op.
         if (!accountRepository.existsById(id)) {
             return;
         }
 
-        // Investment detail has a 1:1 FK to account and can be safely cleaned up.
         investmentDetailRepository.deleteByAccountId(id);
 
         try {
             accountRepository.deleteById(id);
-            // Force constraint checks now so any DB error is handled in this method.
             accountRepository.flush();
         } catch (DataIntegrityViolationException ex) {
-            // In rare race/commit-timing cases the row can already be gone despite exception.
             if (!accountRepository.existsById(id)) {
                 return;
             }
@@ -141,15 +138,29 @@ public class AccountService {
             if (hasNoTransactions) {
                 account.setOpeningBalance(dto.manualBalance());
             }
-            // If transactions exist, silently ignore the flag — don't corrupt history
         }
 
         account = accountRepository.save(account);
-        return buildResponse(account);
+        return buildResponse(account, loadViewContext(List.of(account)));
     }
 
-    private AccountDTO.Response buildResponse(Account account) {
-        var breakdown = accountBalanceService.getBreakdown(account.getId());
+    private AccountViewContext loadViewContext(Collection<Account> accounts) {
+        Map<UUID, BalanceBreakdown> breakdowns = accountBalanceService.getBreakdowns(accounts);
+        List<UUID> investmentIds = accounts.stream()
+                .filter(account -> account.getAccountType() == AccountType.INVESTMENT)
+                .map(Account::getId)
+                .toList();
+        Map<UUID, BigDecimal> checkpointValues =
+                investmentBalanceService.loadLatestCheckpointValues(investmentIds);
+        Map<UUID, InvestmentDetail> details = investmentIds.isEmpty()
+                ? Map.of()
+                : investmentDetailRepository.findByAccountIdIn(investmentIds).stream()
+                        .collect(Collectors.toMap(detail -> detail.getAccount().getId(), detail -> detail));
+        return new AccountViewContext(breakdowns, checkpointValues, details);
+    }
+
+    private AccountDTO.Response buildResponse(Account account, AccountViewContext context) {
+        BalanceBreakdown breakdown = context.breakdowns().get(account.getId());
         BigDecimal totalIncome = breakdown.totalIncome();
         BigDecimal totalExpenses = breakdown.totalExpenses();
         BigDecimal contributedBalance = breakdown.calculatedBalance();
@@ -164,30 +175,20 @@ public class AccountService {
         BigDecimal returnPercentage = null;
 
         if (account.getAccountType() == AccountType.INVESTMENT) {
-            var detailOpt = investmentDetailRepository.findByAccountId(account.getId());
-            if (detailOpt.isPresent()) {
-                var detail = detailOpt.get();
+            InvestmentDetail detail = context.details().get(account.getId());
+            if (detail != null) {
                 platform = detail.getPlatform();
                 instrument = detail.getInstrument();
                 assetType = detail.getAssetType();
             }
 
             contributedAmount = contributedBalance;
-            currentValue = account.getManualBalance() != null
-                    ? account.getManualBalance()
-                    : investmentCheckpointRepository
-                            .findTopByAccountIdOrderByRecordedAtDesc(account.getId())
-                            .map(InvestmentCheckpoint::getValue)
-                            .orElse(contributedAmount);
-
-            // For investment accounts, the primary displayed balance follows current manual/checkpoint snapshot.
+            currentValue = investmentBalanceService.resolveCurrentValue(
+                    account, contributedBalance, context.checkpointValues());
             displayCalculatedBalance = currentValue;
-
-            returnAmount = currentValue.subtract(contributedAmount);
-            returnPercentage = contributedAmount.compareTo(BigDecimal.ZERO) != 0
-                    ? returnAmount.divide(contributedAmount, 4, RoundingMode.HALF_UP)
-                            .multiply(BigDecimal.valueOf(100))
-                    : BigDecimal.ZERO;
+            returnAmount = investmentBalanceService.computeReturnAmount(contributedAmount, currentValue);
+            returnPercentage = investmentBalanceService.computeReturnPercentage(
+                    contributedAmount, currentValue);
         }
 
         return new AccountDTO.Response(
@@ -210,4 +211,9 @@ public class AccountService {
                 returnPercentage
         );
     }
+
+    private record AccountViewContext(
+            Map<UUID, BalanceBreakdown> breakdowns,
+            Map<UUID, BigDecimal> checkpointValues,
+            Map<UUID, InvestmentDetail> details) {}
 }

@@ -14,7 +14,9 @@ import java.util.stream.Collectors;
 
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.vfa.vault.ai.LlmProviderRouter;
 import com.vfa.vault.ai.WeeklyDataSnapshot;
@@ -46,6 +48,7 @@ public class WeeklySummaryService {
     private final IncomeRepository incomeRepository;
     private final GoalService goalService;
     private final AccountService accountService;
+    private final PlatformTransactionManager transactionManager;
 
     @Transactional(readOnly = true)
     public List<WeeklySummaryResponseDTO> findAll() {
@@ -68,7 +71,6 @@ public class WeeklySummaryService {
                 .orElseThrow(() -> new ResourceNotFoundException("WeeklySummary", id));
     }
 
-    @Transactional
     public WeeklySummaryResponseDTO generateNow() {
         return generateAndSave()
                 .map(this::toResponse)
@@ -76,7 +78,6 @@ public class WeeklySummaryService {
                         "Summary generation is currently unavailable. Verify LM Studio/Groq connectivity and credentials."));
     }
 
-    @Transactional
     public void generateScheduled() {
         Optional<WeeklySummary> generated = generateAndSave();
         if (generated.isPresent()) {
@@ -87,19 +88,18 @@ public class WeeklySummaryService {
         }
     }
 
-        @Transactional
-        public void deleteById(UUID id) {
-                // Hard delete only. Idempotent by design: deleting a missing row is a no-op.
-                weeklySummaryRepository.findById(id).ifPresent(summary -> {
-                        weeklySummaryRepository.delete(summary);
-                        weeklySummaryRepository.flush();
-                });
-        }
+    @Transactional
+    public void deleteById(UUID id) {
+        // Hard delete only. Idempotent by design: deleting a missing row is a no-op.
+        weeklySummaryRepository.findById(id).ifPresent(summary -> {
+            weeklySummaryRepository.delete(summary);
+            weeklySummaryRepository.flush();
+        });
+    }
 
     private Optional<WeeklySummary> generateAndSave() {
-        LlmProviderConfig config = configRepo.getConfig();
-
-        WeeklyDataSnapshot snapshot = buildSnapshot();
+        LlmProviderConfig config = loadConfig();
+        WeeklyDataSnapshot snapshot = loadSnapshot();
         ChatClient client = llmProviderRouter.getClientForTask(LlmProviderRouter.TaskType.SUMMARY);
 
         String summaryText;
@@ -118,16 +118,41 @@ public class WeeklySummaryService {
             return Optional.empty();
         }
 
-        WeeklySummary summary = new WeeklySummary();
-        summary.setWeekStart(snapshot.weekStart());
-        summary.setWeekEnd(snapshot.weekEnd());
-        summary.setSummaryText(summaryText);
-        summary.setTotalSpent(snapshot.totalSpent());
-        summary.setProvider(config.getSummaryProvider());
-        summary.setModel(config.getSummaryModel());
-        summary.setGeneratedAt(LocalDateTime.now());
+        return Optional.of(persistSummary(snapshot, summaryText, config));
+    }
 
-        return Optional.of(weeklySummaryRepository.save(summary));
+    private LlmProviderConfig loadConfig() {
+        TransactionTemplate tx = readOnlyTransaction();
+        return tx.execute(status -> configRepo.getConfig());
+    }
+
+    private WeeklyDataSnapshot loadSnapshot() {
+        TransactionTemplate tx = readOnlyTransaction();
+        return tx.execute(status -> buildSnapshot());
+    }
+
+    private WeeklySummary persistSummary(
+            WeeklyDataSnapshot snapshot,
+            String summaryText,
+            LlmProviderConfig config) {
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        return tx.execute(status -> {
+            WeeklySummary summary = new WeeklySummary();
+            summary.setWeekStart(snapshot.weekStart());
+            summary.setWeekEnd(snapshot.weekEnd());
+            summary.setSummaryText(summaryText);
+            summary.setTotalSpent(snapshot.totalSpent());
+            summary.setProvider(config.getSummaryProvider());
+            summary.setModel(config.getSummaryModel());
+            summary.setGeneratedAt(LocalDateTime.now());
+            return weeklySummaryRepository.save(summary);
+        });
+    }
+
+    private TransactionTemplate readOnlyTransaction() {
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        tx.setReadOnly(true);
+        return tx;
     }
 
     private WeeklyDataSnapshot buildSnapshot() {

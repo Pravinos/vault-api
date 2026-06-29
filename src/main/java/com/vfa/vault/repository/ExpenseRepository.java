@@ -2,6 +2,7 @@ package com.vfa.vault.repository;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -13,6 +14,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import com.vfa.vault.entity.Expense;
+import com.vfa.vault.repository.projection.AccountIdAmountProjection;
 import com.vfa.vault.repository.projection.CategoryAmountProjection;
 import com.vfa.vault.repository.projection.CategoryIdAmountProjection;
 import com.vfa.vault.repository.projection.DayAmountProjection;
@@ -93,6 +95,14 @@ public interface ExpenseRepository extends JpaRepository<Expense, UUID> {
 
     @Query("SELECT SUM(e.amount) FROM Expense e WHERE e.account.id = :accountId")
     BigDecimal sumByAccountId(@Param("accountId") UUID accountId);
+
+    @Query("""
+            SELECT e.account.id AS accountId, COALESCE(SUM(e.amount), 0) AS total
+            FROM Expense e
+            WHERE e.account.id IN :accountIds
+            GROUP BY e.account.id
+            """)
+    List<AccountIdAmountProjection> sumByAccountIds(@Param("accountIds") Collection<UUID> accountIds);
 
     @Query("""
             SELECT COALESCE(SUM(e.amount), 0) FROM Expense e

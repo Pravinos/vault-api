@@ -3,8 +3,6 @@ package com.vfa.vault.ai;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +17,7 @@ import com.vfa.vault.repository.ExpenseRepository;
 import com.vfa.vault.repository.IncomeRepository;
 import com.vfa.vault.service.DashboardService;
 import com.vfa.vault.service.GoalService;
+import com.vfa.vault.util.MonthParser;
 
 import lombok.RequiredArgsConstructor;
 
@@ -30,8 +29,6 @@ public class FinanceTools {
     private final IncomeRepository incomeRepository;
         private final DashboardService dashboardService;
     private final GoalService goalService;
-
-    private static final DateTimeFormatter MONTH_FMT = DateTimeFormatter.ofPattern("yyyy-MM");
 
     public record BudgetStatus(
             String currentMonth,
@@ -66,7 +63,7 @@ public class FinanceTools {
 
     @Tool(description = "Get total expenses grouped by category for a given month. Month format: YYYY-MM")
     public Map<String, Double> getExpensesByCategory(String month) {
-        YearMonth ym = YearMonth.parse(month, MONTH_FMT);
+        YearMonth ym = MonthParser.parseYearMonth(month);
         return expenseRepository
                 .sumByCategoryForDateRange(ym.atDay(1), ym.atEndOfMonth())
                 .stream()
@@ -79,10 +76,9 @@ public class FinanceTools {
     @Tool(description = "Get the current month's total spending and how it compares to the previous month")
     public BudgetStatus getBudgetStatus() {
         DashboardResponseDTO dashboard = dashboardService.getDashboard();
-        YearMonth now = YearMonth.now();
-        YearMonth prev = now.minusMonths(1);
-        String thisMonth = now.format(MONTH_FMT);
-        String lastMonth = prev.format(MONTH_FMT);
+        YearMonth prev = YearMonth.now().minusMonths(1);
+        String thisMonth = MonthParser.currentMonth();
+        String lastMonth = MonthParser.formatMonth(prev.atDay(1));
 
         BigDecimal thisTotal = dashboard.getExpensesThisMonth() != null
                 ? dashboard.getExpensesThisMonth()
@@ -177,7 +173,7 @@ public class FinanceTools {
 
     @Tool(description = "Get total income grouped by category for a given month. Month format: YYYY-MM")
     public Map<String, Double> getIncomeByCategory(String month) {
-        YearMonth ym = YearMonth.parse(month, MONTH_FMT);
+        YearMonth ym = MonthParser.parseYearMonth(month);
         return incomeRepository
                 .sumByCategoryForDateRange(ym.atDay(1), ym.atEndOfMonth())
                 .stream()
@@ -194,7 +190,7 @@ public class FinanceTools {
             return valueOrZero(dashboard.getNetCashFlow());
         }
 
-        YearMonth ym = YearMonth.parse(month, MONTH_FMT);
+        YearMonth ym = MonthParser.parseYearMonth(month);
         LocalDate start = ym.atDay(1);
         LocalDate end = ym.atEndOfMonth();
 
@@ -204,13 +200,13 @@ public class FinanceTools {
         return totalIncome.subtract(totalExpenses).doubleValue();
     }
 
-        private boolean isCurrentMonth(String month) {
-                try {
-                        return YearMonth.parse(month, MONTH_FMT).equals(YearMonth.now());
-                } catch (DateTimeParseException ex) {
-                        return false;
-                }
+    private boolean isCurrentMonth(String month) {
+        try {
+            return MonthParser.parseYearMonth(month).equals(YearMonth.now());
+        } catch (IllegalArgumentException ex) {
+            return false;
         }
+    }
 
         private Double toDoubleOrNull(BigDecimal value) {
                 return value != null ? value.doubleValue() : null;

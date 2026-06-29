@@ -3,12 +3,9 @@ package com.vfa.vault.service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
-import java.time.YearMonth;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -24,6 +21,7 @@ import com.vfa.vault.repository.AccountRepository;
 import com.vfa.vault.repository.CategoryRepository;
 import com.vfa.vault.repository.ExpenseRepository;
 import com.vfa.vault.repository.projection.ExpenseDateAmountProjection;
+import com.vfa.vault.util.MonthParser;
 
 import lombok.RequiredArgsConstructor;
 
@@ -35,19 +33,17 @@ public class ExpenseService {
     private final CategoryRepository categoryRepository;
     private final AccountRepository accountRepository;
 
-    private static final DateTimeFormatter MONTH_FMT = DateTimeFormatter.ofPattern("yyyy-MM");
-
     @Transactional(readOnly = true)
     public List<ExpenseDTO.Response> findAll(String month, Integer categoryId) {
         List<Expense> expenses;
 
         if (month != null && categoryId != null) {
-            YearMonth ym = YearMonth.parse(month, MONTH_FMT);
+            var ym = MonthParser.parseYearMonth(month);
             expenses = expenseRepository
                     .findByExpenseDateBetweenAndCategoryIdOrderByExpenseDateDesc(
                             ym.atDay(1), ym.atEndOfMonth(), categoryId);
         } else if (month != null) {
-            YearMonth ym = YearMonth.parse(month, MONTH_FMT);
+            var ym = MonthParser.parseYearMonth(month);
             expenses = expenseRepository.findByExpenseDateBetweenOrderByExpenseDateDesc(
                     ym.atDay(1), ym.atEndOfMonth());
         } else if (categoryId != null) {
@@ -78,19 +74,22 @@ public class ExpenseService {
     }
 
     @Transactional
-    public Optional<ExpenseDTO.Response> update(UUID id, ExpenseDTO.Request request) {
-        return expenseRepository.findById(id).map(expense -> {
-            var category = categoryRepository.findById(request.categoryId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Category", request.categoryId()));
-            var account = accountRepository.findById(request.accountId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Account", request.accountId()));
-            expense.setAmount(request.amount());
-            expense.setNote(request.note());
-            expense.setCategory(category);
-            expense.setAccount(account);
-            if (request.expenseDate() != null) expense.setExpenseDate(request.expenseDate());
-            return toResponse(expenseRepository.save(expense));
-        });
+    public ExpenseDTO.Response update(UUID id, ExpenseDTO.Request request) {
+        Expense expense = expenseRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Expense", id));
+
+        var category = categoryRepository.findById(request.categoryId())
+                .orElseThrow(() -> new ResourceNotFoundException("Category", request.categoryId()));
+        var account = accountRepository.findById(request.accountId())
+                .orElseThrow(() -> new ResourceNotFoundException("Account", request.accountId()));
+        expense.setAmount(request.amount());
+        expense.setNote(request.note());
+        expense.setCategory(category);
+        expense.setAccount(account);
+        if (request.expenseDate() != null) {
+            expense.setExpenseDate(request.expenseDate());
+        }
+        return toResponse(expenseRepository.save(expense));
     }
 
     @Transactional
@@ -104,9 +103,11 @@ public class ExpenseService {
 
     @Transactional(readOnly = true)
     public ExpenseDTO.MonthlySummary getMonthlySummary(String month) {
-        if (month == null) month = YearMonth.now().format(MONTH_FMT);
+        if (month == null) {
+            month = MonthParser.currentMonth();
+        }
 
-        YearMonth ym = YearMonth.parse(month, MONTH_FMT);
+        var ym = MonthParser.parseYearMonth(month);
         LocalDate start = ym.atDay(1);
         LocalDate end = ym.atEndOfMonth();
 
@@ -146,8 +147,8 @@ public class ExpenseService {
 
     @Transactional(readOnly = true)
     public ExpenseDTO.Stats getStats() {
-        YearMonth thisYm = YearMonth.now();
-        YearMonth lastYm = thisYm.minusMonths(1);
+        var thisYm = MonthParser.parseYearMonth(MonthParser.currentMonth());
+        var lastYm = thisYm.minusMonths(1);
 
         BigDecimal totalThis = expenseRepository.totalForDateRange(
                 thisYm.atDay(1), thisYm.atEndOfMonth());

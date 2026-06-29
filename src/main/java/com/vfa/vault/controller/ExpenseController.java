@@ -48,9 +48,7 @@ public class ExpenseController {
     public ResponseEntity<ExpenseDTO.Response> update(
             @PathVariable UUID id,
             @Valid @RequestBody ExpenseDTO.Request request) {
-        return expenseService.update(id, request)
-                .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.noContent().build());
+        return ResponseEntity.ok(expenseService.update(id, request));
     }
 
     @DeleteMapping("/{id}")

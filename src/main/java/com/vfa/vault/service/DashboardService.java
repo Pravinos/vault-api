@@ -7,6 +7,8 @@ import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,8 +23,7 @@ import com.vfa.vault.entity.AccountType;
 import com.vfa.vault.repository.AccountRepository;
 import com.vfa.vault.repository.ExpenseRepository;
 import com.vfa.vault.repository.IncomeRepository;
-import com.vfa.vault.repository.InvestmentCheckpointRepository;
-import com.vfa.vault.repository.TransferRepository;
+import com.vfa.vault.service.AccountBalanceService.BalanceBreakdown;
 
 import lombok.RequiredArgsConstructor;
 
@@ -30,14 +31,14 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class DashboardService {
 
-        private static final Logger log = LoggerFactory.getLogger(DashboardService.class);
+    private static final Logger log = LoggerFactory.getLogger(DashboardService.class);
 
     private final AccountRepository accountRepository;
     private final ExpenseRepository expenseRepository;
     private final IncomeRepository incomeRepository;
-    private final TransferRepository transferRepository;
-    private final InvestmentCheckpointRepository checkpointRepository;
     private final BudgetService budgetService;
+    private final AccountBalanceService accountBalanceService;
+    private final InvestmentBalanceService investmentBalanceService;
 
     @Transactional(readOnly = true)
     public DashboardResponseDTO getDashboard() {
@@ -46,8 +47,19 @@ public class DashboardService {
         int daysElapsed = LocalDate.now().getDayOfMonth();
 
         List<Account> accounts = accountRepository.findAllOrderByLastUpdatedDesc();
+        Map<UUID, BalanceBreakdown> breakdowns = accountBalanceService.getBreakdowns(accounts);
+        List<UUID> investmentIds = accounts.stream()
+                .filter(account -> account.getAccountType() == AccountType.INVESTMENT)
+                .map(Account::getId)
+                .toList();
+        Map<UUID, BigDecimal> checkpointValues =
+                investmentBalanceService.loadLatestCheckpointValues(investmentIds);
+
         List<AccountDashboardDTO> accountDTOs = accounts.stream()
-                .map(this::buildAccountDTO)
+                .map(account -> buildAccountDTO(
+                        account,
+                        breakdowns.get(account.getId()),
+                        checkpointValues))
                 .toList();
 
         BigDecimal calculatedNetWorth = accountDTOs.stream()
@@ -135,28 +147,21 @@ public class DashboardService {
                 .build();
     }
 
-    private AccountDashboardDTO buildAccountDTO(Account account) {
-        BigDecimal opening = nvl(account.getOpeningBalance());
-
-        BigDecimal totalIncome = nvl(incomeRepository.sumByAccountId(account.getId()));
-        BigDecimal totalExpenses = nvl(expenseRepository.sumByAccountId(account.getId()));
-        BigDecimal transfersIn = nvl(transferRepository.sumIncomingByAccountId(account.getId()));
-        BigDecimal transfersOut = nvl(transferRepository.sumOutgoingByAccountId(account.getId()));
-
-        BigDecimal contributedBalance = opening
-                .add(totalIncome)
-                .subtract(totalExpenses)
-                .add(transfersIn)
-                .subtract(transfersOut);
+    private AccountDashboardDTO buildAccountDTO(
+            Account account,
+            BalanceBreakdown breakdown,
+            Map<UUID, BigDecimal> checkpointValues) {
+        BigDecimal opening = nvl(breakdown.openingBalance());
+        BigDecimal contributedBalance = breakdown.calculatedBalance();
 
         log.debug("Dashboard account breakdown id={}, name={}, opening={}, income={}, expenses={}, transfersIn={}, transfersOut={}, calculated={}",
                 account.getId(),
                 account.getName(),
                 opening,
-                totalIncome,
-                totalExpenses,
-                transfersIn,
-                transfersOut,
+                breakdown.totalIncome(),
+                breakdown.totalExpenses(),
+                breakdown.incomingTransfers(),
+                breakdown.outgoingTransfers(),
                 contributedBalance);
 
         BigDecimal displayBalance = contributedBalance;
@@ -165,32 +170,21 @@ public class DashboardService {
         BigDecimal currentValue = null;
         BigDecimal returnAmount = null;
         BigDecimal returnPct = null;
-                AccountType accountType = account.getAccountType();
+        AccountType accountType = account.getAccountType();
 
-                if (accountType == AccountType.INVESTMENT) {
-                    currentValue = account.getManualBalance() != null
-                            ? account.getManualBalance()
-                            : checkpointRepository
-                                    .findTopByAccountIdOrderByRecordedAtDesc(account.getId())
-                                    .map(c -> c.getValue())
-                                    .orElse(contributedBalance);
-
-            // For investment accounts, dashboard primary balance should reflect latest checkpoint market value.
+        if (accountType == AccountType.INVESTMENT) {
+            currentValue = investmentBalanceService.resolveCurrentValue(
+                    account, contributedBalance, checkpointValues);
             displayBalance = currentValue;
             sinceOpening = displayBalance.subtract(opening);
-
-            returnAmount = currentValue.subtract(contributedBalance);
-            if (contributedBalance.compareTo(BigDecimal.ZERO) > 0) {
-                returnPct = returnAmount
-                        .divide(contributedBalance, 4, RoundingMode.HALF_UP)
-                        .multiply(BigDecimal.valueOf(100))
-                        .setScale(1, RoundingMode.HALF_UP);
-            }
+            returnAmount = investmentBalanceService.computeReturnAmount(contributedBalance, currentValue);
+            returnPct = investmentBalanceService.computeReturnPercentageForDisplay(
+                    contributedBalance, currentValue);
         }
 
         String secondaryLabel;
         boolean secondaryPositive;
-                if (accountType == AccountType.INVESTMENT && returnPct != null) {
+        if (accountType == AccountType.INVESTMENT && returnPct != null) {
             secondaryPositive = returnPct.compareTo(BigDecimal.ZERO) >= 0;
             secondaryLabel = (secondaryPositive ? "+" : "") + returnPct + "% return";
         } else {
@@ -228,12 +222,12 @@ public class DashboardService {
         return val != null ? val : BigDecimal.ZERO;
     }
 
-        private BigDecimal manualDriftReference(AccountDashboardDTO account) {
-                if ("INVESTMENT".equals(account.getAccountType()) && account.getCurrentValue() != null) {
-                        return account.getCurrentValue();
-                }
-                return account.getCalculatedBalance();
+    private BigDecimal manualDriftReference(AccountDashboardDTO account) {
+        if ("INVESTMENT".equals(account.getAccountType()) && account.getCurrentValue() != null) {
+            return account.getCurrentValue();
         }
+        return account.getCalculatedBalance();
+    }
 
     private String formatAmount(BigDecimal amount) {
         BigDecimal scaled = amount.setScale(2, RoundingMode.HALF_UP);
