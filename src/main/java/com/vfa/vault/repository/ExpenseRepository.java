@@ -13,6 +13,12 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import com.vfa.vault.entity.Expense;
+import com.vfa.vault.repository.projection.CategoryAmountProjection;
+import com.vfa.vault.repository.projection.CategoryIdAmountProjection;
+import com.vfa.vault.repository.projection.DayAmountProjection;
+import com.vfa.vault.repository.projection.ExpenseDateAmountProjection;
+import com.vfa.vault.repository.projection.MonthAmountProjection;
+import com.vfa.vault.repository.projection.TopCategoryProjection;
 
 @Repository
 public interface ExpenseRepository extends JpaRepository<Expense, UUID> {
@@ -20,6 +26,8 @@ public interface ExpenseRepository extends JpaRepository<Expense, UUID> {
     @EntityGraph(attributePaths = {"category", "account"})
     List<Expense> findByExpenseDateBetweenOrderByExpenseDateDesc(
             LocalDate start, LocalDate end);
+
+    long countByExpenseDateBetween(LocalDate start, LocalDate end);
 
     @EntityGraph(attributePaths = {"category", "account"})
     List<Expense> findByCategoryIdOrderByExpenseDateDesc(Integer categoryId);
@@ -35,36 +43,31 @@ public interface ExpenseRepository extends JpaRepository<Expense, UUID> {
     @EntityGraph(attributePaths = {"category", "account"})
     @Query("""
             SELECT e FROM Expense e
-            WHERE FUNCTION('TO_CHAR', e.expenseDate, 'YYYY-MM') = :month
+            WHERE e.expenseDate >= :weekStart
+            AND e.expenseDate <= :weekEnd
             ORDER BY e.expenseDate DESC
             """)
-    List<Expense> findByMonth(@Param("month") String month);
+    List<Expense> findByWeek(
+            @Param("weekStart") LocalDate weekStart,
+            @Param("weekEnd") LocalDate weekEnd);
 
     @Query("""
-            SELECT c.name AS category, SUM(e.amount) AS total
+            SELECT c.name AS name, SUM(e.amount) AS total
             FROM Expense e JOIN e.category c
-            WHERE FUNCTION('TO_CHAR', e.expenseDate, 'YYYY-MM') = :month
+            WHERE e.expenseDate >= :start AND e.expenseDate <= :end
             GROUP BY c.name
             ORDER BY total DESC
             """)
-    List<Object[]> sumByCategoryForMonth(@Param("month") String month);
+    List<CategoryAmountProjection> sumByCategoryForDateRange(
+            @Param("start") LocalDate start,
+            @Param("end") LocalDate end);
 
     @Query("""
             SELECT SUM(e.amount)
             FROM Expense e
-            WHERE FUNCTION('TO_CHAR', e.expenseDate, 'YYYY-MM') = :month
+            WHERE e.expenseDate >= :start AND e.expenseDate <= :end
             """)
-    BigDecimal totalForMonth(@Param("month") String month);
-
-    @Query("""
-            SELECT SUM(e.amount)
-            FROM Expense e
-            WHERE FUNCTION('TO_CHAR', e.expenseDate, 'YYYY-MM') = :month
-            AND e.category.id = :categoryId
-            """)
-    BigDecimal totalForMonthAndCategory(
-            @Param("month") String month,
-            @Param("categoryId") Integer categoryId);
+    BigDecimal totalForDateRange(@Param("start") LocalDate start, @Param("end") LocalDate end);
 
     @Query("""
             SELECT CAST(e.expenseDate AS string) AS day, SUM(e.amount) AS total
@@ -73,7 +76,7 @@ public interface ExpenseRepository extends JpaRepository<Expense, UUID> {
             GROUP BY e.expenseDate
             ORDER BY e.expenseDate DESC
             """)
-    List<Object[]> dailyTotalsFrom(@Param("since") LocalDate since);
+    List<DayAmountProjection> dailyTotalsFrom(@Param("since") LocalDate since);
 
     @Query("""
             SELECT FUNCTION('TO_CHAR', e.expenseDate, 'YYYY-MM') AS month,
@@ -84,57 +87,61 @@ public interface ExpenseRepository extends JpaRepository<Expense, UUID> {
             GROUP BY FUNCTION('TO_CHAR', e.expenseDate, 'YYYY-MM')
             ORDER BY month DESC
             """)
-    List<Object[]> monthlyTotalsByCategory(
+    List<MonthAmountProjection> monthlyTotalsByCategory(
             @Param("category") String category,
             @Param("since") LocalDate since);
-
-    @EntityGraph(attributePaths = {"category", "account"})
-    @Query("""
-            SELECT e FROM Expense e
-            WHERE e.expenseDate >= :weekStart
-            AND e.expenseDate <= :weekEnd
-            ORDER BY e.expenseDate DESC
-            """)
-    List<Expense> findByWeek(
-            @Param("weekStart") LocalDate weekStart,
-            @Param("weekEnd") LocalDate weekEnd);
 
     @Query("SELECT SUM(e.amount) FROM Expense e WHERE e.account.id = :accountId")
     BigDecimal sumByAccountId(@Param("accountId") UUID accountId);
 
-        @Query("""
-                SELECT COALESCE(SUM(e.amount), 0) FROM Expense e
-                WHERE YEAR(e.expenseDate) = :year AND MONTH(e.expenseDate) = :month
-                """)
-        Optional<BigDecimal> sumByYearMonth(@Param("year") int year, @Param("month") int month);
-
-        @Query(value = """
-                SELECT c.name AS category_name, SUM(e.amount) AS total
-                FROM expenses e
-                JOIN categories c ON c.id = e.category_id
-                WHERE EXTRACT(YEAR FROM e.expense_date) = :year
-                  AND EXTRACT(MONTH FROM e.expense_date) = :month
-                GROUP BY c.id, c.name
-                ORDER BY total DESC
-                LIMIT 1
-                """, nativeQuery = true)
-        Optional<Object[]> findTopCategoryByYearMonth(@Param("year") int year, @Param("month") int month);
+    @Query("""
+            SELECT COALESCE(SUM(e.amount), 0) FROM Expense e
+            WHERE e.expenseDate >= :start AND e.expenseDate <= :end
+            """)
+    Optional<BigDecimal> sumByYearMonth(
+            @Param("start") LocalDate start,
+            @Param("end") LocalDate end);
 
     @Query("""
-            SELECT c.name, SUM(e.amount)
+            SELECT c.name AS categoryName, SUM(e.amount) AS total
+            FROM Expense e JOIN e.category c
+            WHERE e.expenseDate >= :start AND e.expenseDate <= :end
+            GROUP BY c.id, c.name
+            ORDER BY SUM(e.amount) DESC
+            LIMIT 1
+            """)
+    Optional<TopCategoryProjection> findTopCategoryForDateRange(
+            @Param("start") LocalDate start,
+            @Param("end") LocalDate end);
+
+    @Query("""
+            SELECT c.name AS name, SUM(e.amount) AS total
             FROM Expense e JOIN e.category c
             WHERE e.expenseDate BETWEEN :start AND :end
             GROUP BY c.name
             """)
-    List<Object[]> sumByCategoryBetweenDatesRaw(
+    List<CategoryAmountProjection> sumByCategoryBetweenDates(
             @Param("start") LocalDate start,
             @Param("end") LocalDate end);
 
-    @Query("SELECT e.category.id, SUM(e.amount) FROM Expense e WHERE e.expenseDate >= :start AND e.expenseDate < :end GROUP BY e.category.id")
-    List<Object[]> sumByCategoryIdForDateRange(
+    @Query("""
+            SELECT e.category.id AS categoryId, SUM(e.amount) AS total
+            FROM Expense e
+            WHERE e.expenseDate >= :start AND e.expenseDate < :end
+            GROUP BY e.category.id
+            """)
+    List<CategoryIdAmountProjection> sumByCategoryIdForDateRange(
             @Param("start") LocalDate start,
             @Param("end") LocalDate end);
 
-    @Query("SELECT e.expenseDate, SUM(e.amount) FROM Expense e WHERE e.expenseDate >= :start AND e.expenseDate <= :end GROUP BY e.expenseDate ORDER BY e.expenseDate")
-    List<Object[]> sumByDayForYear(@Param("start") LocalDate start, @Param("end") LocalDate end);
+    @Query("""
+            SELECT e.expenseDate AS expenseDate, SUM(e.amount) AS total
+            FROM Expense e
+            WHERE e.expenseDate >= :start AND e.expenseDate <= :end
+            GROUP BY e.expenseDate
+            ORDER BY e.expenseDate
+            """)
+    List<ExpenseDateAmountProjection> sumByDayForYear(
+            @Param("start") LocalDate start,
+            @Param("end") LocalDate end);
 }

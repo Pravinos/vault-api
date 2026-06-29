@@ -24,6 +24,7 @@ import com.vfa.vault.exception.ResourceNotFoundException;
 import com.vfa.vault.repository.BudgetRepository;
 import com.vfa.vault.repository.CategoryRepository;
 import com.vfa.vault.repository.ExpenseRepository;
+import com.vfa.vault.repository.projection.CategoryIdAmountProjection;
 
 import lombok.RequiredArgsConstructor;
 
@@ -93,10 +94,10 @@ public class BudgetService {
 
     private Map<Integer, BigDecimal> loadSpentByCategory(LocalDate monthStart, LocalDate monthEnd) {
         Map<Integer, BigDecimal> spentByCategory = new HashMap<>();
-        for (Object[] row : expenseRepository.sumByCategoryIdForDateRange(monthStart, monthEnd)) {
-            Integer categoryId = toInteger(row[0]);
+        for (CategoryIdAmountProjection row : expenseRepository.sumByCategoryIdForDateRange(monthStart, monthEnd)) {
+            Integer categoryId = row.getCategoryId();
             if (categoryId != null) {
-                spentByCategory.put(categoryId, toBigDecimal(row[1]));
+                spentByCategory.put(categoryId, row.getTotal());
             }
         }
         return spentByCategory;
@@ -165,28 +166,5 @@ public class BudgetService {
 
     private String formatMonth(LocalDate month) {
         return YearMonth.from(month).format(MONTH_FMT);
-    }
-
-    private BigDecimal toBigDecimal(Object value) {
-        if (value == null) {
-            return BigDecimal.ZERO;
-        }
-        if (value instanceof BigDecimal decimal) {
-            return decimal;
-        }
-        if (value instanceof Number number) {
-            return new BigDecimal(number.toString());
-        }
-        return BigDecimal.ZERO;
-    }
-
-    private Integer toInteger(Object value) {
-        if (value instanceof Integer integer) {
-            return integer;
-        }
-        if (value instanceof Number number) {
-            return number.intValue();
-        }
-        return null;
     }
 }

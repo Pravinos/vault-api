@@ -7,7 +7,6 @@ import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
-import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,17 +72,17 @@ public class DashboardService {
         }
 
         BigDecimal incomeThis = incomeRepository
-                .sumByYearMonth(current.getYear(), current.getMonthValue())
+                .sumByYearMonth(current.atDay(1), current.atEndOfMonth())
                 .orElse(BigDecimal.ZERO);
         BigDecimal incomeLast = incomeRepository
-                .sumByYearMonth(last.getYear(), last.getMonthValue())
+                .sumByYearMonth(last.atDay(1), last.atEndOfMonth())
                 .orElse(BigDecimal.ZERO);
 
         BigDecimal expensesThis = expenseRepository
-                .sumByYearMonth(current.getYear(), current.getMonthValue())
+                .sumByYearMonth(current.atDay(1), current.atEndOfMonth())
                 .orElse(BigDecimal.ZERO);
         BigDecimal expensesLast = expenseRepository
-                .sumByYearMonth(last.getYear(), last.getMonthValue())
+                .sumByYearMonth(last.atDay(1), last.atEndOfMonth())
                 .orElse(BigDecimal.ZERO);
 
         BigDecimal netCashFlow = incomeThis.subtract(expensesThis);
@@ -92,19 +91,14 @@ public class DashboardService {
                 ? expensesThis.divide(BigDecimal.valueOf(daysElapsed), 2, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
 
-        Optional<Object[]> topCatRaw = expenseRepository
-                .findTopCategoryByYearMonth(current.getYear(), current.getMonthValue());
-        Object[] topCat = unwrapRow(topCatRaw.orElse(null));
+        var topCat = expenseRepository
+                .findTopCategoryForDateRange(current.atDay(1), current.atEndOfMonth());
 
         String topCategoryName = "N/A";
         BigDecimal topCategoryAmount = BigDecimal.ZERO;
-        if (topCat != null) {
-            if (topCat.length > 0 && topCat[0] != null) {
-                topCategoryName = String.valueOf(topCat[0]);
-            }
-            if (topCat.length > 1 && topCat[1] != null) {
-                topCategoryAmount = toBigDecimal(topCat[1]);
-            }
+        if (topCat.isPresent()) {
+            topCategoryName = topCat.get().getCategoryName();
+            topCategoryAmount = nvl(topCat.get().getTotal());
         }
 
         BigDecimal expenseMoM = calcMoMPercent(expensesThis, expensesLast);
@@ -146,8 +140,8 @@ public class DashboardService {
 
         BigDecimal totalIncome = nvl(incomeRepository.sumByAccountId(account.getId()));
         BigDecimal totalExpenses = nvl(expenseRepository.sumByAccountId(account.getId()));
-        BigDecimal transfersIn = transferRepository.sumByToAccountId(account.getId()).orElse(BigDecimal.ZERO);
-        BigDecimal transfersOut = transferRepository.sumByFromAccountId(account.getId()).orElse(BigDecimal.ZERO);
+        BigDecimal transfersIn = nvl(transferRepository.sumIncomingByAccountId(account.getId()));
+        BigDecimal transfersOut = nvl(transferRepository.sumOutgoingByAccountId(account.getId()));
 
         BigDecimal contributedBalance = opening
                 .add(totalIncome)
@@ -234,31 +228,11 @@ public class DashboardService {
         return val != null ? val : BigDecimal.ZERO;
     }
 
-    private BigDecimal toBigDecimal(Object value) {
-        if (value instanceof BigDecimal decimal) {
-            return decimal;
-        }
-        if (value instanceof Number number) {
-                        return new BigDecimal(number.toString());
-        }
-        return BigDecimal.ZERO;
-    }
-
         private BigDecimal manualDriftReference(AccountDashboardDTO account) {
                 if ("INVESTMENT".equals(account.getAccountType()) && account.getCurrentValue() != null) {
                         return account.getCurrentValue();
                 }
                 return account.getCalculatedBalance();
-        }
-
-        private Object[] unwrapRow(Object[] row) {
-                if (row == null) {
-                        return null;
-                }
-                if (row.length == 1 && row[0] instanceof Object[] nested) {
-                        return nested;
-                }
-                return row;
         }
 
     private String formatAmount(BigDecimal amount) {

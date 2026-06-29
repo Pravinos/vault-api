@@ -28,6 +28,7 @@ import com.vfa.vault.exception.ResourceNotFoundException;
 import com.vfa.vault.repository.BudgetRepository;
 import com.vfa.vault.repository.CategoryRepository;
 import com.vfa.vault.repository.ExpenseRepository;
+import com.vfa.vault.repository.projection.CategoryIdAmountProjection;
 
 @ExtendWith(MockitoExtension.class)
 class BudgetServiceTest {
@@ -93,7 +94,7 @@ class BudgetServiceTest {
         when(budgetRepository.findByMonth(LocalDate.of(2026, 6, 1))).thenReturn(List.of(budget));
         when(expenseRepository.sumByCategoryIdForDateRange(
                 LocalDate.of(2026, 6, 1), LocalDate.of(2026, 7, 1)))
-                .thenReturn(List.<Object[]>of(row(1, new BigDecimal("80.00"))));
+                .thenReturn(List.of(categoryRow(1, new BigDecimal("80.00"))));
 
         List<BudgetSummaryDTO> summary = budgetService.getBudgetSummary("2026-06");
 
@@ -130,10 +131,10 @@ class BudgetServiceTest {
                 budget(overCategory, new BigDecimal("100.00"), LocalDate.of(2026, 6, 1))));
         when(expenseRepository.sumByCategoryIdForDateRange(
                 LocalDate.of(2026, 6, 1), LocalDate.of(2026, 7, 1)))
-                .thenReturn(List.<Object[]>of(
-                        row(1, new BigDecimal("50.00")),
-                        row(2, new BigDecimal("80.00")),
-                        row(3, new BigDecimal("100.00"))));
+                .thenReturn(List.of(
+                        categoryRow(1, new BigDecimal("50.00")),
+                        categoryRow(2, new BigDecimal("80.00")),
+                        categoryRow(3, new BigDecimal("100.00"))));
 
         List<BudgetSummaryDTO> alerts = budgetService.getBudgetAlerts("2026-06");
 
@@ -160,7 +161,17 @@ class BudgetServiceTest {
         return budget;
     }
 
-    private static Object[] row(int categoryId, BigDecimal amount) {
-        return new Object[] { categoryId, amount };
+    private static CategoryIdAmountProjection categoryRow(int categoryId, BigDecimal amount) {
+        return new CategoryIdAmountProjection() {
+            @Override
+            public Integer getCategoryId() {
+                return categoryId;
+            }
+
+            @Override
+            public BigDecimal getTotal() {
+                return amount;
+            }
+        };
     }
 }

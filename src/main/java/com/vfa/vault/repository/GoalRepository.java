@@ -9,16 +9,12 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import com.vfa.vault.entity.Goal;
-import com.vfa.vault.entity.GoalType;
 
 @Repository
 public interface GoalRepository extends JpaRepository<Goal, UUID> {
 
     @EntityGraph(attributePaths = "linkedAccounts")
     List<Goal> findByIsActiveTrueOrderByCreatedAtDesc();
-
-    @EntityGraph(attributePaths = "linkedAccounts")
-    List<Goal> findByGoalTypeAndIsActiveTrue(GoalType goalType);
 
     @Override
     @EntityGraph(attributePaths = "linkedAccounts")

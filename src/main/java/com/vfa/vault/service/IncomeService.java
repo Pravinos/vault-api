@@ -1,6 +1,7 @@
 package com.vfa.vault.service;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -17,6 +18,7 @@ import com.vfa.vault.exception.ResourceNotFoundException;
 import com.vfa.vault.repository.AccountRepository;
 import com.vfa.vault.repository.IncomeCategoryRepository;
 import com.vfa.vault.repository.IncomeRepository;
+import com.vfa.vault.repository.projection.CategoryAmountProjection;
 
 import lombok.RequiredArgsConstructor;
 
@@ -32,10 +34,23 @@ public class IncomeService {
 
     @Transactional(readOnly = true)
     public List<IncomeDTO.Response> getIncome(String month, UUID accountId) {
-        return incomeRepository.findByFilters(month, accountId)
-                .stream()
-                .map(this::toResponse)
-                .toList();
+        List<Income> incomes;
+        if (month != null) {
+            YearMonth ym = YearMonth.parse(month, MONTH_FMT);
+            LocalDate start = ym.atDay(1);
+            LocalDate end = ym.atEndOfMonth();
+            if (accountId != null) {
+                incomes = incomeRepository.findByIncomeDateBetweenAndAccountIdOrderByIncomeDateDesc(
+                        start, end, accountId);
+            } else {
+                incomes = incomeRepository.findByIncomeDateBetweenOrderByIncomeDateDesc(start, end);
+            }
+        } else if (accountId != null) {
+            incomes = incomeRepository.findByAccountIdOrderByIncomeDateDesc(accountId);
+        } else {
+            incomes = incomeRepository.findAll();
+        }
+        return incomes.stream().map(this::toResponse).toList();
     }
 
     @Transactional
@@ -76,21 +91,20 @@ public class IncomeService {
 
     @Transactional
     public void deleteIncome(UUID id) {
-                // Hard delete only. Idempotent by design: deleting a missing row is a no-op.
-                incomeRepository.findById(id).ifPresent(income -> {
-                        incomeRepository.delete(income);
-                        incomeRepository.flush();
-                });
+        incomeRepository.findById(id).ifPresent(income -> {
+            incomeRepository.delete(income);
+            incomeRepository.flush();
+        });
     }
 
     @Transactional(readOnly = true)
     public Map<String, BigDecimal> getMonthlySummary(String month) {
         final String resolvedMonth = month != null ? month : YearMonth.now().format(MONTH_FMT);
-        return incomeRepository.findByFilters(resolvedMonth, null).stream()
-                .collect(Collectors.groupingBy(
-                        i -> i.getIncomeCategory().getName(),
-                        Collectors.reducing(BigDecimal.ZERO, Income::getAmount, BigDecimal::add)
-                ));
+        YearMonth ym = YearMonth.parse(resolvedMonth, MONTH_FMT);
+        return incomeRepository.sumByCategoryForDateRange(ym.atDay(1), ym.atEndOfMonth()).stream()
+                .collect(Collectors.toMap(
+                        CategoryAmountProjection::getName,
+                        CategoryAmountProjection::getTotal));
     }
 
     private IncomeDTO.Response toResponse(Income i) {

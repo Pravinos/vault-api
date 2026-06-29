@@ -29,6 +29,7 @@ import com.vfa.vault.repository.ExpenseRepository;
 import com.vfa.vault.repository.IncomeRepository;
 import com.vfa.vault.repository.LlmProviderConfigRepository;
 import com.vfa.vault.repository.WeeklySummaryRepository;
+import com.vfa.vault.repository.projection.CategoryAmountProjection;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -96,8 +97,7 @@ public class WeeklySummaryService {
         }
 
     private Optional<WeeklySummary> generateAndSave() {
-        LlmProviderConfig config = configRepo.findById(1)
-                .orElseThrow(() -> new IllegalStateException("llm_provider_config row not found"));
+        LlmProviderConfig config = configRepo.getConfig();
 
         WeeklyDataSnapshot snapshot = buildSnapshot();
         ChatClient client = llmProviderRouter.getClientForTask(LlmProviderRouter.TaskType.SUMMARY);
@@ -135,11 +135,11 @@ public class WeeklySummaryService {
         LocalDate weekStart = weekEnd.minusDays(6);
 
         Map<String, BigDecimal> spendingByCategory = expenseRepository
-                .sumByCategoryBetweenDatesRaw(weekStart, weekEnd)
+                .sumByCategoryBetweenDates(weekStart, weekEnd)
                 .stream()
                 .collect(Collectors.toMap(
-                        row -> (String) row[0],
-                        row -> (BigDecimal) row[1],
+                        CategoryAmountProjection::getName,
+                        CategoryAmountProjection::getTotal,
                         (left, right) -> left,
                         LinkedHashMap::new));
 
@@ -147,11 +147,11 @@ public class WeeklySummaryService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         Map<String, BigDecimal> incomeByCategory = incomeRepository
-                .sumByCategoryBetweenDatesRaw(weekStart, weekEnd)
+                .sumByCategoryBetweenDates(weekStart, weekEnd)
                 .stream()
                 .collect(Collectors.toMap(
-                        row -> (String) row[0],
-                        row -> (BigDecimal) row[1],
+                        CategoryAmountProjection::getName,
+                        CategoryAmountProjection::getTotal,
                         (left, right) -> left,
                         LinkedHashMap::new));
 

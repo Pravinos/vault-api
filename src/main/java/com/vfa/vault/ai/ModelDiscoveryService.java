@@ -97,8 +97,7 @@ public class ModelDiscoveryService {
     private void updateCachedModels(String provider, List<String> models) {
         try {
             String json = objectMapper.writeValueAsString(models);
-            LlmProviderConfig config = configRepo.findById(1)
-                    .orElseThrow(() -> new IllegalStateException("LLM config not found"));
+            LlmProviderConfig config = configRepo.getConfig();
             if ("lmstudio".equals(provider)) {
                 config.setLmstudioModels(json);
             } else {
@@ -112,7 +111,7 @@ public class ModelDiscoveryService {
     }
 
     private List<String> getCachedModels(String provider) {
-        return configRepo.findById(1).map(config -> {
+        return configRepo.findConfig().map(config -> {
             String json = "lmstudio".equals(provider)
                     ? config.getLmstudioModels()
                     : config.getGroqModels();

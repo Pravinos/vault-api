@@ -15,9 +15,4 @@ public interface InvestmentCheckpointRepository extends JpaRepository<Investment
     List<InvestmentCheckpoint> findByAccountIdOrderByRecordedAtDesc(UUID accountId);
 
     Optional<InvestmentCheckpoint> findTopByAccountIdOrderByRecordedAtDesc(UUID accountId);
-
-    default Optional<java.math.BigDecimal> findLatestValueByAccountId(UUID accountId) {
-        return findTopByAccountIdOrderByRecordedAtDesc(accountId)
-                .map(InvestmentCheckpoint::getValue);
-    }
 }

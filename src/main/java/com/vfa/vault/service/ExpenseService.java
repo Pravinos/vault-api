@@ -23,6 +23,7 @@ import com.vfa.vault.exception.ResourceNotFoundException;
 import com.vfa.vault.repository.AccountRepository;
 import com.vfa.vault.repository.CategoryRepository;
 import com.vfa.vault.repository.ExpenseRepository;
+import com.vfa.vault.repository.projection.ExpenseDateAmountProjection;
 
 import lombok.RequiredArgsConstructor;
 
@@ -46,7 +47,9 @@ public class ExpenseService {
                     .findByExpenseDateBetweenAndCategoryIdOrderByExpenseDateDesc(
                             ym.atDay(1), ym.atEndOfMonth(), categoryId);
         } else if (month != null) {
-            expenses = expenseRepository.findByMonth(month);
+            YearMonth ym = YearMonth.parse(month, MONTH_FMT);
+            expenses = expenseRepository.findByExpenseDateBetweenOrderByExpenseDateDesc(
+                    ym.atDay(1), ym.atEndOfMonth());
         } else if (categoryId != null) {
             expenses = expenseRepository.findByCategoryIdOrderByExpenseDateDesc(categoryId);
         } else {
@@ -103,14 +106,17 @@ public class ExpenseService {
     public ExpenseDTO.MonthlySummary getMonthlySummary(String month) {
         if (month == null) month = YearMonth.now().format(MONTH_FMT);
 
-        BigDecimal total = expenseRepository.totalForMonth(month);
+        YearMonth ym = YearMonth.parse(month, MONTH_FMT);
+        LocalDate start = ym.atDay(1);
+        LocalDate end = ym.atEndOfMonth();
+
+        BigDecimal total = expenseRepository.totalForDateRange(start, end);
         if (total == null) total = BigDecimal.ZERO;
 
-        List<Object[]> rows = expenseRepository.sumByCategoryForMonth(month);
-        List<ExpenseDTO.CategoryTotal> byCategory = rows.stream()
-                .map(r -> new ExpenseDTO.CategoryTotal(
-                        (String) r[0],
-                        (BigDecimal) r[1]))
+        List<ExpenseDTO.CategoryTotal> byCategory = expenseRepository
+                .sumByCategoryForDateRange(start, end)
+                .stream()
+                .map(r -> new ExpenseDTO.CategoryTotal(r.getName(), r.getTotal()))
                 .toList();
 
         return new ExpenseDTO.MonthlySummary(month, total, byCategory);
@@ -123,9 +129,11 @@ public class ExpenseService {
         }
         LocalDate start = LocalDate.of(year, 1, 1);
         LocalDate end = LocalDate.of(year, 12, 31);
-        List<Object[]> rows = expenseRepository.sumByDayForYear(start, end);
+        List<ExpenseDateAmountProjection> rows = expenseRepository.sumByDayForYear(start, end);
         Map<LocalDate, BigDecimal> byDay = rows.stream()
-                .collect(Collectors.toMap(r -> (LocalDate) r[0], r -> (BigDecimal) r[1]));
+                .collect(Collectors.toMap(
+                        ExpenseDateAmountProjection::getExpenseDate,
+                        ExpenseDateAmountProjection::getTotal));
         List<ExpenseHeatmapDTO.DayTotal> days = new ArrayList<>();
         BigDecimal max = BigDecimal.ZERO;
         for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
@@ -138,23 +146,30 @@ public class ExpenseService {
 
     @Transactional(readOnly = true)
     public ExpenseDTO.Stats getStats() {
-        String thisMonth = YearMonth.now().format(MONTH_FMT);
-        String lastMonth = YearMonth.now().minusMonths(1).format(MONTH_FMT);
+        YearMonth thisYm = YearMonth.now();
+        YearMonth lastYm = thisYm.minusMonths(1);
 
-        BigDecimal totalThis = expenseRepository.totalForMonth(thisMonth);
+        BigDecimal totalThis = expenseRepository.totalForDateRange(
+                thisYm.atDay(1), thisYm.atEndOfMonth());
         if (totalThis == null) totalThis = BigDecimal.ZERO;
 
-        BigDecimal totalLast = expenseRepository.totalForMonth(lastMonth);
+        BigDecimal totalLast = expenseRepository.totalForDateRange(
+                lastYm.atDay(1), lastYm.atEndOfMonth());
         if (totalLast == null) totalLast = BigDecimal.ZERO;
 
-        int daysThisMonth = YearMonth.now().lengthOfMonth();
+        int daysThisMonth = thisYm.lengthOfMonth();
         BigDecimal avgPerDay = totalThis.divide(
                 BigDecimal.valueOf(daysThisMonth), 2, RoundingMode.HALF_UP);
 
-        List<Object[]> byCat = expenseRepository.sumByCategoryForMonth(thisMonth);
-        String topCategory = byCat.isEmpty() ? "N/A" : (String) byCat.get(0)[0];
+        List<ExpenseDTO.CategoryTotal> byCat = expenseRepository
+                .sumByCategoryForDateRange(thisYm.atDay(1), thisYm.atEndOfMonth())
+                .stream()
+                .map(r -> new ExpenseDTO.CategoryTotal(r.getName(), r.getTotal()))
+                .toList();
+        String topCategory = byCat.isEmpty() ? "N/A" : byCat.get(0).category();
 
-        long count = expenseRepository.findByMonth(thisMonth).size();
+        long count = expenseRepository.countByExpenseDateBetween(
+                thisYm.atDay(1), thisYm.atEndOfMonth());
 
         return new ExpenseDTO.Stats(totalThis, totalLast, avgPerDay, topCategory, count);
     }

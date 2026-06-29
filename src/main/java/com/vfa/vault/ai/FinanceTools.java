@@ -15,7 +15,6 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
 import com.vfa.vault.dto.DashboardResponseDTO;
-import com.vfa.vault.entity.Income;
 import com.vfa.vault.repository.ExpenseRepository;
 import com.vfa.vault.repository.IncomeRepository;
 import com.vfa.vault.service.DashboardService;
@@ -67,10 +66,13 @@ public class FinanceTools {
 
     @Tool(description = "Get total expenses grouped by category for a given month. Month format: YYYY-MM")
     public Map<String, Double> getExpensesByCategory(String month) {
-        return expenseRepository.sumByCategoryForMonth(month).stream()
+        YearMonth ym = YearMonth.parse(month, MONTH_FMT);
+        return expenseRepository
+                .sumByCategoryForDateRange(ym.atDay(1), ym.atEndOfMonth())
+                .stream()
                 .collect(Collectors.toMap(
-                        row -> (String) row[0],
-                        row -> ((BigDecimal) row[1]).doubleValue()
+                        row -> row.getName(),
+                        row -> row.getTotal().doubleValue()
                 ));
     }
 
@@ -137,8 +139,8 @@ public class FinanceTools {
         LocalDate since = LocalDate.now().minusDays(days);
         return expenseRepository.dailyTotalsFrom(since).stream()
                 .map(row -> new DailySpend(
-                        (String) row[0],
-                        ((BigDecimal) row[1]).doubleValue()))
+                        row.getDay(),
+                        row.getTotal().doubleValue()))
                 .toList();
     }
 
@@ -147,8 +149,8 @@ public class FinanceTools {
         LocalDate since = LocalDate.now().minusMonths(months).withDayOfMonth(1);
         return expenseRepository.monthlyTotalsByCategory(category, since).stream()
                 .collect(Collectors.toMap(
-                        row -> (String) row[0],
-                        row -> ((BigDecimal) row[1]).doubleValue()
+                        row -> row.getMonth(),
+                        row -> row.getTotal().doubleValue()
                 ));
     }
 
@@ -175,10 +177,13 @@ public class FinanceTools {
 
     @Tool(description = "Get total income grouped by category for a given month. Month format: YYYY-MM")
     public Map<String, Double> getIncomeByCategory(String month) {
-        return incomeRepository.sumByCategoryForMonth(month).stream()
+        YearMonth ym = YearMonth.parse(month, MONTH_FMT);
+        return incomeRepository
+                .sumByCategoryForDateRange(ym.atDay(1), ym.atEndOfMonth())
+                .stream()
                 .collect(Collectors.toMap(
-                        row -> (String) row[0],
-                        row -> ((BigDecimal) row[1]).doubleValue()
+                        row -> row.getName(),
+                        row -> row.getTotal().doubleValue()
                 ));
     }
 
@@ -189,10 +194,12 @@ public class FinanceTools {
             return valueOrZero(dashboard.getNetCashFlow());
         }
 
-        BigDecimal totalIncome = incomeRepository.findByFilters(month, null).stream()
-                .map(Income::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal totalExpenses = expenseRepository.totalForMonth(month);
+        YearMonth ym = YearMonth.parse(month, MONTH_FMT);
+        LocalDate start = ym.atDay(1);
+        LocalDate end = ym.atEndOfMonth();
+
+        BigDecimal totalIncome = incomeRepository.sumByYearMonth(start, end).orElse(BigDecimal.ZERO);
+        BigDecimal totalExpenses = expenseRepository.totalForDateRange(start, end);
         if (totalExpenses == null) totalExpenses = BigDecimal.ZERO;
         return totalIncome.subtract(totalExpenses).doubleValue();
     }

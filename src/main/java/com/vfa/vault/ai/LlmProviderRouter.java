@@ -34,8 +34,7 @@ public class LlmProviderRouter {
     }
 
     public ChatClient getClientForTask(TaskType task) {
-        LlmProviderConfig config = configRepo.findById(1)
-                .orElseThrow(() -> new IllegalStateException("LLM provider config not found (id=1)"));
+        LlmProviderConfig config = configRepo.getConfig();
 
         String provider = task == TaskType.SUMMARY
                 ? config.getSummaryProvider()

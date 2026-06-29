@@ -46,8 +46,7 @@ public class AiController {
     @PostMapping("/chat")
     public ResponseEntity<ChatResponseDTO> chat(@RequestBody ChatRequestDTO request) {
         ChatClient chatClient = llmProviderRouter.getClientForTask(LlmProviderRouter.TaskType.CHAT);
-        LlmProviderConfig config = configRepository.findById(1)
-                .orElseThrow(() -> new IllegalStateException("LLM config not found"));
+        LlmProviderConfig config = configRepository.getConfig();
 
         String reply;
         boolean hasConversation = request.conversationId() != null
@@ -78,8 +77,7 @@ public class AiController {
 
     @GetMapping("/config")
     public ResponseEntity<AiConfigResponseDTO> getConfig() {
-        LlmProviderConfig config = configRepository.findById(1)
-                .orElseThrow(() -> new IllegalStateException("LLM config not found"));
+        LlmProviderConfig config = configRepository.getConfig();
         return ResponseEntity.ok(buildConfigResponse(config));
     }
 
@@ -93,8 +91,7 @@ public class AiController {
             throw new IllegalArgumentException("provider must be 'lmstudio' or 'groq'");
         }
 
-        LlmProviderConfig config = configRepository.findById(1)
-                .orElseThrow(() -> new IllegalStateException("LLM config not found"));
+        LlmProviderConfig config = configRepository.getConfig();
 
         if ("chat".equals(request.task())) {
             config.setChatProvider(request.provider());
