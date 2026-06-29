@@ -85,7 +85,7 @@ public class GoalService {
     public void deactivate(UUID id) {
         var goal = goalRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Goal", id));
-        goal.setIsActive(false);
+        goal.setActive(false);
         goalRepository.save(goal);
     }
 
@@ -154,7 +154,7 @@ public class GoalService {
                 g.getGoalType(),
                 g.getDeadline(),
                 g.getCreatedAt(),
-                g.getIsActive(),
+                g.isActive(),
                 progress,
                 daysRemaining,
                 isOverdue,

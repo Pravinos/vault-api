@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-import com.vfa.vault.entity.Goal;
+import com.vfa.vault.entity.GoalType;
 
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
@@ -29,7 +29,7 @@ public class GoalDTO {
             BigDecimal targetAmount,
 
             @NotNull(message = "Goal type is required")
-            Goal.GoalType goalType,
+            GoalType goalType,
 
             LocalDate deadline,
 
@@ -42,7 +42,7 @@ public class GoalDTO {
             String description,
             BigDecimal targetAmount,
             BigDecimal savedAmount,
-            Goal.GoalType goalType,
+            GoalType goalType,
             LocalDate deadline,
             LocalDateTime createdAt,
             Boolean isActive,

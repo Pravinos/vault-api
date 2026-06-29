@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -13,7 +14,13 @@ import com.vfa.vault.entity.Budget;
 @Repository
 public interface BudgetRepository extends JpaRepository<Budget, UUID> {
 
+    @EntityGraph(attributePaths = "category")
     List<Budget> findByMonth(LocalDate month);
 
+    @EntityGraph(attributePaths = "category")
     Optional<Budget> findByCategoryIdAndMonth(Integer categoryId, LocalDate month);
+
+    @Override
+    @EntityGraph(attributePaths = "category")
+    Optional<Budget> findById(UUID id);
 }

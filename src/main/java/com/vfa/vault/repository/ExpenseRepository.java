@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -16,14 +17,22 @@ import com.vfa.vault.entity.Expense;
 @Repository
 public interface ExpenseRepository extends JpaRepository<Expense, UUID> {
 
+    @EntityGraph(attributePaths = {"category", "account"})
     List<Expense> findByExpenseDateBetweenOrderByExpenseDateDesc(
             LocalDate start, LocalDate end);
 
+    @EntityGraph(attributePaths = {"category", "account"})
     List<Expense> findByCategoryIdOrderByExpenseDateDesc(Integer categoryId);
 
+    @EntityGraph(attributePaths = {"category", "account"})
     List<Expense> findByExpenseDateBetweenAndCategoryIdOrderByExpenseDateDesc(
             LocalDate start, LocalDate end, Integer categoryId);
 
+    @Override
+    @EntityGraph(attributePaths = {"category", "account"})
+    List<Expense> findAll();
+
+    @EntityGraph(attributePaths = {"category", "account"})
     @Query("""
             SELECT e FROM Expense e
             WHERE FUNCTION('TO_CHAR', e.expenseDate, 'YYYY-MM') = :month
@@ -79,6 +88,7 @@ public interface ExpenseRepository extends JpaRepository<Expense, UUID> {
             @Param("category") String category,
             @Param("since") LocalDate since);
 
+    @EntityGraph(attributePaths = {"category", "account"})
     @Query("""
             SELECT e FROM Expense e
             WHERE e.expenseDate >= :weekStart

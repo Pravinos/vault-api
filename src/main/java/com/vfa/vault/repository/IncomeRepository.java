@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -16,8 +17,10 @@ import com.vfa.vault.entity.Income;
 @Repository
 public interface IncomeRepository extends JpaRepository<Income, UUID> {
 
+    @EntityGraph(attributePaths = {"incomeCategory", "account"})
     List<Income> findByAccountId(UUID accountId);
 
+    @EntityGraph(attributePaths = {"incomeCategory", "account"})
     @Query("""
             SELECT i FROM Income i
             WHERE (:month IS NULL OR FUNCTION('TO_CHAR', i.incomeDate, 'YYYY-MM') = :month)

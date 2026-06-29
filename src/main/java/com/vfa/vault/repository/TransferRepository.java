@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -17,6 +18,7 @@ public interface TransferRepository extends JpaRepository<Transfer, UUID> {
 
     boolean existsByOriginalTransferId(UUID originalTransferId);
 
+    @EntityGraph(attributePaths = {"fromAccount", "toAccount"})
     @Query("""
             SELECT t FROM Transfer t
             WHERE t.fromAccount.id = :accountId
@@ -24,6 +26,10 @@ public interface TransferRepository extends JpaRepository<Transfer, UUID> {
             ORDER BY t.transferDate DESC, t.createdAt DESC
             """)
     List<Transfer> findByAccountId(@Param("accountId") UUID accountId);
+
+    @Override
+    @EntityGraph(attributePaths = {"fromAccount", "toAccount", "originalTransfer"})
+    Optional<Transfer> findById(UUID id);
 
     @Query("""
         SELECT COALESCE(SUM(t.amount), 0)

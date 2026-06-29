@@ -7,9 +7,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 
-import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UuidGenerator;
-import org.hibernate.type.SqlTypes;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -22,15 +20,20 @@ import jakarta.persistence.JoinTable;
 import jakarta.persistence.ManyToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
-import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.Setter;
 
-@Data
+@Getter
+@Setter
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @Entity
 @Table(name = "goals")
 public class Goal {
 
     @Id
     @UuidGenerator
+    @EqualsAndHashCode.Include
     private UUID id;
 
     @Column(nullable = false, length = 100)
@@ -51,11 +54,10 @@ public class Goal {
         joinColumns = @JoinColumn(name = "goal_id"),
         inverseJoinColumns = @JoinColumn(name = "account_id")
     )
-    private Set<com.vfa.vault.entity.Account> linkedAccounts = new HashSet<>();
+    private Set<Account> linkedAccounts = new HashSet<>();
 
     @Enumerated(EnumType.STRING)
-    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
-    @Column(name = "goal_type", nullable = false, columnDefinition = "goal_type")
+    @Column(name = "goal_type", nullable = false, length = 20)
     private GoalType goalType;
 
     @Column(name = "deadline")
@@ -65,16 +67,11 @@ public class Goal {
     private LocalDateTime createdAt;
 
     @Column(name = "is_active", nullable = false)
-    private Boolean isActive = true;
+    private boolean isActive = true;
 
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         if (savedAmount == null) savedAmount = BigDecimal.ZERO;
-        if (isActive == null) isActive = true;
-    }
-
-    public enum GoalType {
-        SHORT_TERM, LONG_TERM
     }
 }
